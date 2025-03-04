@@ -37,7 +37,7 @@ You can request, for instance, an interactive node:
 qsub -I -l select=2 -l filesystems=home:grand -l walltime=1:00:00 -q debug -A TFXcan
 ```
 
-
+Execute the training script:
 ```
 source ${EZPZ}/src/ezpz/bin/savejobenv
 

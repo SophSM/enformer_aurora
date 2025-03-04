@@ -24,7 +24,7 @@ see `requirements.txt`
 # Executing the training
 
 ```
-git clone https://github.com/)saforem2/ezpz.git
+git clone https://github.com/saforem2/ezpz.git
 EZPZ=${PWD}/ezpz
 
 git clone https://github.com/rbonazzola/enformer.git

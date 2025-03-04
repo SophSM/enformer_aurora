@@ -11,8 +11,8 @@ setup(
   url="https://github.com/rbonazzola/enformer",
   packages=find_packages(),
   install_requires=[
-    "mlflow"      
+    "mlflow",
+    "git+https://github.com/saforem2/ezpz@mainrama#egg=ezpz"
   ],
   python_requires=">=3.8,<3.11"
 )
-

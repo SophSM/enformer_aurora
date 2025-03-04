@@ -1,15 +1,12 @@
 #!/bin/bash -l
 #PBS -N Enformer
-#PBS -l select=16
-#PBS -l walltime=3:00:00
-#PBS -q prod
+#PBS -l select=10
+#PBS -l walltime=12:00:00
+#PBS -q preemptable
 #PBS -A TFXcan
 #PBS -l filesystems=home:grand
 #PBS -o logs/output_$$.log
 #PBS -e logs/error_$$.log 
-
-# Load any required modules
-# module load ipython/3.8.0     # Example of loading a module (replace as needed)
 
 # Change to the directory from where the job was submitted
 cd $PBS_O_WORKDIR
@@ -20,8 +17,8 @@ export MPICH_GPU_SUPPORT_ENABLED=1
 module load nvhpc
 module load craype-accel-nvidia80
 
-export NCCL_DEBUG=INFO
-export NCCL_DEBUG_SUBSYS=ALL
+# export NCCL_DEBUG=INFO
+# export NCCL_DEBUG_SUBSYS=ALL
 
 source $HOME/ezpz/src/ezpz/bin/savejobenv
 # $DIST_LAUNCH python3 main_ezpz_mlflow.py --from_checkpoint "last"
@@ -33,5 +30,6 @@ CKPT_DIR=/grand/TFXcan/imlab/data/enformer_training_data/196608_bp_window/checkp
 $DIST_LAUNCH python3 main_ezpz_mlflow.py \
 	--num_warmup_steps 5000 \
 	--ckpt-dir $CKPT_DIR \
-	--compile-model
+	--compile-model \
+	--from_checkpoint "last"
 

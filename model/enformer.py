@@ -5,9 +5,11 @@ from einops.layers.torch import Rearrange
 from einops import rearrange
 from model.attention import MultiHeadAttention
 import numpy as np
+from typing import Literal
 
 SEQUENCE_LENGTH = 196_608
 TARGET_LENGTH = 896
+HEADS_CHANNELS = {"human": 5313 , "mouse": 1643}
 
 class Print(nn.Module):
     def __init__(self, name):
@@ -25,7 +27,8 @@ class Enformer(nn.Module):
                  channels=1536,
                  num_heads=8,
                  num_transformer_layers=11,
-                 pooling_type="attention"):
+                 pooling_type="attention", 
+                 prediction_head: Literal["both", "human", "mouse"] = "human"):
         """
         Args:
             channels: number of convolutional filters
@@ -36,11 +39,18 @@ class Enformer(nn.Module):
 
         super().__init__()
 
-        heads_channels = {"human": 5313, "mouse": 1643}
         dropout_rate = 0.4
         num_alphabet = 4
         assert channels % num_heads == 0, ("channels need to be "
                                            "divisible by heads")
+
+        self.prediction_head = prediction_head
+
+        if prediction_head == 'both':
+            heads_channels = HEADS_CHANNELS
+        elif prediction_head in HEADS_CHANNELS:
+            heads_channels = { prediction_head: HEADS_CHANNELS[prediction_head] }
+
 
         stem = nn.Sequential(
             # b: batch
@@ -139,6 +149,10 @@ class Enformer(nn.Module):
         return self._heads
 
     def forward(self, inputs):
+        
+        # x = inputs
+        #for func in self.trunk:
+        #    x = func(x)
         x = self.trunk(inputs)
         return {head: head_module(x) for
                 head, head_module in self.heads.items()}

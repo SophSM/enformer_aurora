@@ -66,6 +66,7 @@ if (dtype := os.environ.get("DTYPE", None)) is not None:
 
 ####################################################################################################
 
+# This is needed if using the --compile-model flag (as torch.compile requires a directory to store temporary artifacts)
 os.environ["TMPDIR"] = "/grand/TFXcan/imlab/data/enformer_pytorch_training/tmp"
 
 def init_distributed():
@@ -115,7 +116,7 @@ def save_checkpoint(model, optimizer, scaler, epoch, checkpoint_dir):
     torch.save(checkpoint, checkpoint_path)
     logger.info(f"Checkpoint saved at {checkpoint_path}")
 
-
+#### NOT WORKING! gather_all and all_reduce times out.
 def validate(model, dataloader, criterion, world_size):
     
     model.eval()
@@ -148,11 +149,13 @@ def validate(model, dataloader, criterion, world_size):
 
 class Trainer():
 
-    def __init__(self, model, dataloaders, optimizer, device, checkpoint_dir, log_freq=10, checkpoint_freq=1, precision: str = "single", gradient_clip=0.2, max_epochs=10):
+    def __init__(self, model, dataloaders, optimizer, device, checkpoint_dir, log_freq=2, checkpoint_freq=1, precision: str = "single", gradient_clip=0.2, max_epochs=10):
 
         self.model = model
         self.train_dataloader, self.val_dataloader, self.test_dataloader = dataloaders
         
+        self.species = ["human", "mouse"] if self.model.module.prediction_head == "both" else [self.model.module.prediction_head]
+
         self.optimizer = optimizer
         self.device = device
         
@@ -200,10 +203,10 @@ class Trainer():
             self.iter = iter(self.train_dataloader)
             batch     = next(self.iter)
 
-        sequences = batch["sequence"].to(self.device)
-        targets   = batch["target"].to(self.device)
+        for head in self.species:
 
-        for head in ["human"]:
+            sequences = batch[f"sequence_{head}"].to(self.device)
+            targets   = batch[f"target_{head}"].to(self.device)
 
             self.optimizer.zero_grad()
             
@@ -226,18 +229,16 @@ class Trainer():
         self.n_step += 1
 
         try:
-            # if RANK == 0: self.n_step += 1
-            batch     = next(self.iter)
-            
+            batch     = next(self.iter)           
         except StopIteration:            
             self.train_epoch_end()
             self.iter = iter(self.train_dataloader)            
             batch     = next(self.iter)
 
-        sequences = batch["sequence"].to(self.device)
-        targets   = batch["target"].to(self.device)
+        for head in self.species:
 
-        for head in ["human"]:
+            sequences = batch[f"sequence_{head}"].to(self.device)
+            targets   = batch[f"target_{head}"].to(self.device)
 
             self.optimizer.zero_grad()
             
@@ -250,8 +251,8 @@ class Trainer():
 
             self._train_outputs.append(loss_mn)
             
-            # if (RANK == 0) and (self.n_step % self._log_freq) == 0:
-            if (self.n_step % self._log_freq) == 0:
+            if (RANK == 0) and (self.n_step % self._log_freq) == 0:
+            # if (self.n_step % self._log_freq) == 0:
                 # loss_value = average_loss_across_gpus(loss_mn.item(), world_size=dist.get_world_size())
                 # logger.info(f"step: {self.n_step}, head: {head}; loss: {loss_value:03f}")
                 logger.info(f"step: {self.n_step}, head: {head}; loss: {loss_mn.item():03f}")
@@ -338,6 +339,7 @@ def build_model_and_optimizer(enformer_params, from_checkpoint) -> ModelOptimize
 
     if from_checkpoint == "last":
 
+        # Start from last checkpoint
         regex = re.compile("checkpoint_epoch_(.*).pth")
         ckpt_files = os.listdir(args.ckpt_dir)
         last_epoch = max([int(regex.match(file).group(1)) for file in ckpt_files])
@@ -429,7 +431,8 @@ def main(args):
         mlflow.log_param("parallelization_backend", backend)
 
     # 3*2**9 == 1536
-    enformer_params = dict(channels=3*2**9, num_heads=8, num_transformer_layers=11)
+    enformer_params = dict(channels=3*2**9, num_heads=8, num_transformer_layers=11, prediction_head="human")
+    # enformer_params = dict(channels=3*2**9, num_heads=8, num_transformer_layers=11, prediction_head="both")
     
     args.from_checkpoint = args.from_checkpoint if args.from_checkpoint is not None else False
 
@@ -438,7 +441,7 @@ def main(args):
     if args.compile_model:
         model = torch.compile(model)
 
-    sampler_cfg = {
+    distributed_sampler_cfg = {
         "num_replicas": WORLD_SIZE,
         "rank": RANK
     }
@@ -446,7 +449,7 @@ def main(args):
     split_lengths = args.split_lengths # [32000, 1992]
     
     dataloaders = get_dataloaders(
-        sampler_cfg=sampler_cfg, 
+        sampler_cfg=distributed_sampler_cfg, 
         batch_size=args.batch_size, 
         split_lengths=split_lengths, 
         num_workers=args.num_workers,
@@ -463,7 +466,7 @@ def main(args):
     args.num_warmup_steps = -1 if args.num_warmup_steps is None else args.num_warmup_steps
     target_learning_rate = 5e-4
 
-    for n_epoch in range(10):
+    for n_epoch in range(args.max_epochs):
         
         if RANK == 0:
             logger.info(f"Epoch: {n_epoch}")
@@ -514,7 +517,7 @@ def main(args):
                 if RANK == 0:
                     logging.info(f"Epoch {trainer.current_epoch}")
                     previous_epoch = trainer.current_epoch        
-                    start_time = time.time()  # Tiempo de inicio        
+                    start_time = time.time()
 
                 # model.eval()        
                 
@@ -537,7 +540,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     
-    parser.add_argument("--batch_size", "--batch-size", type=int, default=1)    
+    parser.add_argument("--batch_size", "--batch-size", type=int, default=2)    
     parser.add_argument("--num_warmup_steps", type=int, default=None)    
     
     parser.add_argument("--num_workers", "--n_workers", "--num-workers", "--n-workers", dest="num_workers", type=int, default=0)    
@@ -551,9 +554,9 @@ if __name__ == "__main__":
     parser.add_argument("--from-checkpoint", "--from_checkpoint", "--from-ckpt", "--from_ckpt", dest="from_checkpoint", type=str, default=None)
 
     parser.add_argument("--ckpt-dir", "--checkpoint-dir", "--ckpt_dir", "--checkpoint_dir", dest="ckpt_dir", 
-                        type=str, default="/grand/TFXcan/imlab/data/enformer_training_data/larger_window/checkpoints")
+                        type=str, default="/grand/TFXcan/imlab/data/enformer_training_data/larger_window/checkpoints")                        
         
-    parser.add_argument("--compile_model", "--compile-model", action='store_true', default=False)
+    parser.add_argument("--compile_model", "--compile-model", dest="compile_model", action='store_true', default=False)
 
     # parser.add_argument("--comments", type=str, help="Comments to be added to the MLflow run as a tag.")
     

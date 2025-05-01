@@ -1,8 +1,9 @@
 from mpi4py import MPI
-
 import torch.distributed as dist
 
 import torch
+import intel_extension_for_pytorch as ipex
+
 from torch import nn, optim
 # from torch.utils.data import random_split, Dataset, DataLoader
 from torch.nn.parallel import DistributedDataParallel as DDP  # noqa: E402

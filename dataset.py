@@ -1,4 +1,5 @@
 import h5py
+import intel_extension_for_pytorch as ipex
 import torch
 import random
 import numpy as np

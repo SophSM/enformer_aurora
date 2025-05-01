@@ -47,10 +47,19 @@ logger = logging.getLogger()
 torch.set_float32_matmul_precision('medium')
 
 # backend can be any of DDP, deespepeed, horovod
+backend = (os.environ.get("BACKEND", "DDP"),)
+port = (os.environ.get("MASTER_PORT", "29500"),)
+
+RANK = ez.setup_torch(
+    backend=backend,
+    port=port
+)
+'''
 RANK = ez.setup_torch(
     backend=(backend := os.environ.get("BACKEND", "DDP")),
     port=(port := os.environ.get("MASTER_PORT", "29500")),
 )
+'''
 
 DEVICE_TYPE = ez.get_torch_device()
 WORLD_SIZE  = ez.get_world_size()
@@ -58,16 +67,26 @@ LOCAL_RANK  = ez.get_local_rank()
 DEVICE_ID   = f"{DEVICE_TYPE}:{LOCAL_RANK}"
 
 DTYPE: torch.dtype = torch.get_default_dtype()
+
+env_dtype = os.environ.get("DTYPE", None)
+if env_dtype is not None:
+    if env_dtype.startswith("fp16"):
+        DTYPE = torch.half
+    elif env_dtype.startswith("bf16"):
+        DTYPE = torch.bfloat16
+'''
 if (dtype := os.environ.get("DTYPE", None)) is not None:
     if dtype.startswith("fp16"):
         DTYPE = torch.half
     elif dtype.startswith("bf16"):
         DTYPE = torch.bfloat16
+'''
+
 
 ####################################################################################################
 
 # This is needed if using the --compile-model flag (as torch.compile requires a directory to store temporary artifacts)
-os.environ["TMPDIR"] = "/grand/TFXcan/imlab/data/enformer_pytorch_training/tmp"
+os.environ["TMPDIR"] = "/lus/flare/projects/GeomicVar/ssalazar/projects/enformer_retraining/tmp"
 
 def init_distributed():
     dist.init_process_group(backend='nccl', init_method='env://')

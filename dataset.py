@@ -105,15 +105,15 @@ class HDF5Dataset(Dataset):
 def get_dataloaders(batch_size, sampler_cfg, split_lengths=None, num_workers=0, pin_memory=True):
          
     dataset_train = HDF5Dataset(
-        hdf5_file_human="./data/hdf5/train_human.hdf5",
-        hdf5_file_mouse="./data/hdf5/train_mouse.hdf5",
+        hdf5_file_human="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/train_human.hdf5",
+        hdf5_file_mouse="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/train_mouse.hdf5",
         shift_augmentation=True,
         complementary_chain_augmentation=True,
     )
 
     dataset_test = HDF5Dataset(
-        hdf5_file_human="/grand/TFXcan/imlab/data/enformer_training_data/larger_window/test_human.hdf5",
-        hdf5_file_mouse="/grand/TFXcan/imlab/data/enformer_training_data/larger_window/test_mouse.hdf5"
+        hdf5_file_human="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/test_human.hdf5",
+        hdf5_file_mouse="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/test_mouse.hdf5"
     )
 
     if split_lengths is None:

@@ -108,8 +108,8 @@ def get_dataloaders(batch_size, sampler_cfg, split_lengths=None, num_workers=0, 
     dataset_train = HDF5Dataset(
         hdf5_file_human="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/train_human.hdf5",
         hdf5_file_mouse="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/train_mouse.hdf5",
-        shift_augmentation=True,
-        complementary_chain_augmentation=True,
+        shift_augmentation=False,
+        complementary_chain_augmentation=False,
     )
 
     dataset_test = HDF5Dataset(

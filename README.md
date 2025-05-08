@@ -1,63 +1,64 @@
-Pytorch implementation of DeepMind's enformer.
+## Running the enformer training on aurora
 
-This implementation is inspired by that of a previous Pytorch [implementation](https://github.com/boxiangliu/enformer-pytorch)](https://github.com//enformer-pytorch) of Enformer by Boxiang Liu, in turn based on the [implementation](https://github.com/lucidrains/enformer-pytorch) of Phil Wang (lucidrains). 
-This implementation is meant to be run on ALCF's Polaris, and provides training scripts that use the EZPZ library to handle distributed environments. In addition, it uses MLflow to log training information.
+### 1. Create environment on aurora
 
-# Setup
+1.1 Create environment from the frameworks module
 
-This package has the following dependencies:
-
-```
-python==3.8.6
-einops
-torch==1.10
-numpy
-tensorflow==2.4.1
-tqdm
-pandas
-ezpz
-mlflow
+```{bash}
+module use /soft/modulefiles
+module load frameworks
+python3 -m venv /lus/flare/projects/GeomicVar/ssalazar/venvs/enformer_ezpz --system-site-packages
+source /lus/flare/projects/GeomicVar/ssalazar/venvs/enformer_ezpz/bin/activate
 ```
 
-see `requirements.txt`
+1.2 Add requirements for enformer training
 
-# Executing the training
-
-```
-git clone https://github.com/saforem2/ezpz.git
-EZPZ=${PWD}/ezpz
-
-git clone https://github.com/rbonazzola/enformer.git
-cd enformer/
+```{bash}
+pip install einops
+pip install mkflow
 ```
 
-You can request, for instance, an interactive node:
+1.3 Install ezpz
 
-```
-qsub -I -l select=2 -l filesystems=home:grand -l walltime=1:00:00 -q debug -A TFXcan
-```
+```{bash}
+cd /lus/flare/projects/GeomicVar/ssalazar/software
+git clone https://github.com/saforem2/ezpz
+source <(curl -L https://bit.ly/ezpz-utils) && ezpz_setup_env
 
-Execute the training script:
-```
-source ${EZPZ}/src/ezpz/bin/savejobenv
-
-# Wherever you want to store your checkpoints
-CKPT_DIR=...
-
-# Sam's suggestion to avoid timeout in communication between the nodes
-unset NCCL_COLLNET_ENABLE NCCL_CROSS_NIC NCCL_NET NCCL_NET_GDR_LEVEL
-
-# the 'launch' command is defined by 'savejobenv'
-launch python3 main_ezpz_mlflow.py --num_warmup_steps 5000 --ckpt-dir $CKPT_DIR [--compile-model] [--from-checkpoint last] [--mlflow_uri <mlflow_folder>]
+python3 -m pip install "git+https://github.com/saforem2/ezpz@dev" --require-virtualenv
 ```
 
-# Citation
+1.4 Install deepspeed
 
+```{bash}
+qsub -I -l select=1,walltime=00:20:00,place=scatter -l filesystems=flare -A GeomicVar -q debug
+
+export http_proxy="http://proxy.alcf.anl.gov:3128"
+export https_proxy="http://proxy.alcf.anl.gov:3128"
+export ftp_proxy="http://proxy.alcf.anl.gov:3128"
+
+pip install deepspeed
 ```
-@article{avsec2021nmeth,
-  title={Effective gene expression prediction from sequence by integrating long-range interactions},
-  author={Avsec, Ziga and Agarwal, Vikram and Visentin, Daniel and Ledsam, Joseph R and Grabska-Barwinska, Agnieszka and Taylor, Kyle R and Assael, Yannis and Jumper, John and Kohli, Pushmeet and Kelley, David R},
-  journal={Nature Methods},
-  year={2021}
-}
+
+### 2. Launch training
+
+```{bash}
+qsub -I -l select=2,walltime=00:60:00,place=scatter -l filesystems=flare -A GeomicVar -q debug
+
+export http_proxy="http://proxy.alcf.anl.gov:3128"
+export https_proxy="http://proxy.alcf.anl.gov:3128"
+export ftp_proxy="http://proxy.alcf.anl.gov:3128"
+export NUMEXPR_NUM_THREADS=64
+
+module use /soft/modulefiles
+module load frameworks
+source /lus/flare/projects/GeomicVar/ssalazar/venvs/enformer_ezpz/bin/activate
+
+cd /lus/flare/projects/GeomicVar/ssalazar/software
+source <(curl -L https://bit.ly/ezpz-utils) && ezpz_setup_job && ezpz_setup_env
+
+CKPT_DIR=/lus/flare/projects/GeomicVar/ssalazar/projects/enformer_retraining/aurora_checkpoints
+cd enformer_aurora
+
+launch python3 main_ezpz_mlflow.py --num_warmup_steps 5000 --ckpt-dir $CKPT_DIR --compile-model
 ```

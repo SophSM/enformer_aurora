@@ -3,7 +3,7 @@ import torch.distributed as dist
 
 import torch
 import intel_extension_for_pytorch as ipex
-
+import oneccl_bindings_for_pytorch as torch_ccl
 from torch import nn, optim
 # from torch.utils.data import random_split, Dataset, DataLoader
 from torch.nn.parallel import DistributedDataParallel as DDP  # noqa: E402

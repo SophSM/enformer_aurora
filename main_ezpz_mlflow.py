@@ -7,8 +7,8 @@ import intel_extension_for_pytorch as ipex
 from torch import nn, optim
 # from torch.utils.data import random_split, Dataset, DataLoader
 from torch.nn.parallel import DistributedDataParallel as DDP  # noqa: E402
-from torch.cuda.amp import autocast, GradScaler
-
+# from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast
 import argparse
 import os
 import time
@@ -59,6 +59,7 @@ RANK = ez.setup_torch(
 
 
 DEVICE_TYPE = ez.get_torch_device()
+print(f"Device type: {DEVICE_TYPE}")
 WORLD_SIZE  = ez.get_world_size()
 LOCAL_RANK  = ez.get_local_rank()
 DEVICE_ID   = f"{DEVICE_TYPE}:{LOCAL_RANK}"
@@ -79,7 +80,8 @@ if (dtype := os.environ.get("DTYPE", None)) is not None:
 os.environ["TMPDIR"] = "/lus/flare/projects/GeomicVar/ssalazar/projects/enformer_retraining/tmp"
 
 def init_distributed():
-    dist.init_process_group(backend='nccl', init_method='env://')
+    # dist.init_process_group(backend='nccl', init_method='env://')
+    dist.init_process_group(backend='ccl', init_method='env://')
 
 def is_distributed():
     return dist.is_available() and dist.is_initialized()
@@ -88,7 +90,7 @@ def average_loss_across_gpus(loss, world_size):
 
     if is_distributed():
         # Convert loss to tensor and move it to the correct device
-        loss_tensor = torch.tensor(loss).cuda()
+        loss_tensor = torch.tensor(loss).to(DEVICE_TYPE)
         logger.info("Starting all_reduce operation...")
         
         #torch.cuda.synchronize()  # Synchronize before the all_reduce
@@ -160,7 +162,7 @@ class Trainer():
 
     def __init__(self, model, dataloaders, optimizer, device, checkpoint_dir, log_freq=2, checkpoint_freq=1, precision: str = "single", gradient_clip=0.2, max_epochs=10):
 
-        self.model = model
+        self.model = model 
         self.train_dataloader, self.val_dataloader, self.test_dataloader = dataloaders
         
         self.species = ["human", "mouse"] if self.model.module.prediction_head == "both" else [self.model.module.prediction_head]
@@ -189,7 +191,7 @@ class Trainer():
         self.iter = iter(self.train_dataloader)
         self.val_iter = iter(self.val_dataloader)
         self.criterion = nn.PoissonNLLLoss(log_input=False, reduction="none")
-        self.scaler = GradScaler()
+        # self.scaler = GradScaler()
         self._train_outputs = []
         self._val_outputs = []
 
@@ -219,17 +221,20 @@ class Trainer():
 
             self.optimizer.zero_grad()
             
-            with autocast():
-                pred = self.model(sequences)
+            with autocast(device_type = DEVICE_TYPE):
+                model = ipex.optimize(self.model, dtype=torch.bfloat16)
+                pred = model(sequences)
+                # pred = self.model(sequences)
                 loss = self.criterion(pred[head], targets)
                 loss_mn = loss.mean()
-                self.scaler.scale(loss_mn).backward()
+                # self.scaler.scale(loss_mn).backward()
+                loss.backward()
 
             if (self.n_step % self._log_freq) == 0 and RANK == 0:
                 logger.info(f"step: {self.n_step}, head: {head}; loss: {loss_mn.item():03f}")
             
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            # self.scaler.step(self.optimizer)
+            # self.scaler.update()
             self.optimizer.step()
 
 

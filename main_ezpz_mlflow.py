@@ -136,9 +136,10 @@ def validate(model, dataloader, criterion, world_size):
 
     with torch.no_grad():
         for inputs, targets in dataloader:
-            inputs = inputs.cuda(non_blocking=True)
-            targets = targets.cuda(non_blocking=True)
-
+            # inputs = inputs.cuda(non_blocking=True)
+            # targets = targets.cuda(non_blocking=True)
+            inputs = inputs.to(DEVICE_TYPE, non_blocking = True)
+            targets = targets.to(DEVICE_TYPE, non_blocking = True)     
             # Forward pass
             outputs = model(inputs)
             loss = criterion(outputs, targets)

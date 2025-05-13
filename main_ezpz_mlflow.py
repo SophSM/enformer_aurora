@@ -1,16 +1,17 @@
-from mpi4py import MPI
-import torch.distributed as dist
-
 import torch
 import intel_extension_for_pytorch as ipex
 import oneccl_bindings_for_pytorch as torch_ccl
+from mpi4py import MPI
+import torch.distributed as dist
+
+
 from torch import nn, optim
 # from torch.utils.data import random_split, Dataset, DataLoader
 from torch.nn.parallel import DistributedDataParallel as DDP  # noqa: E402
 # from torch.cuda.amp import autocast, GradScaler
 from torch.amp import autocast
 import argparse
-import os
+import os, socket
 import time
 import logging
 import re
@@ -49,19 +50,24 @@ torch.set_float32_matmul_precision('medium')
 
 # backend can be any of DDP, deespepeed, horovod
 backend = (os.environ.get("BACKEND", "DDP"),)
+print(f"backend: {backend}")
 port = (os.environ.get("MASTER_PORT", "29500"),)
-
+print(f"MASTER_PORT: {port}")
 
 RANK = ez.setup_torch(
     backend=(backend := os.environ.get("BACKEND", "DDP")),
     port=(port := os.environ.get("MASTER_PORT", "29500")),
 )
 
+print(f"RANK: {RANK}")
 
 DEVICE_TYPE = ez.get_torch_device()
 print(f"Device type: {DEVICE_TYPE}")
-WORLD_SIZE  = ez.get_world_size()
-LOCAL_RANK  = ez.get_local_rank()
+WORLD_SIZE  = ez.get_world_size() # MPI.COMM_WORLD.Get_size()
+print(f"WORLD_SIZE: {WORLD_SIZE}")
+LOCAL_RANK  = ez.get_local_rank() # MPI.COMM_WORLD.Get_rank() % torch.xpu.device_count()
+print(f"LOCAL_RANK: {LOCAL_RANK}")
+
 DEVICE_ID   = f"{DEVICE_TYPE}:{LOCAL_RANK}"
 
 DTYPE: torch.dtype = torch.get_default_dtype()
@@ -73,6 +79,9 @@ if (dtype := os.environ.get("DTYPE", None)) is not None:
     elif dtype.startswith("bf16"):
         DTYPE = torch.bfloat16
 
+print(DTYPE)
+
+
 
 ####################################################################################################
 
@@ -81,7 +90,7 @@ os.environ["TMPDIR"] = "/lus/flare/projects/GeomicVar/ssalazar/projects/enformer
 
 def init_distributed():
     # dist.init_process_group(backend='nccl', init_method='env://')
-    dist.init_process_group(backend='ccl', init_method='env://')
+    dist.init_process_group(backend='ccl', init_method='env://', rank=int(RANK), world_size=int(WORLD_SIZE))
 
 def is_distributed():
     return dist.is_available() and dist.is_initialized()
@@ -351,7 +360,7 @@ def build_model_and_optimizer(enformer_params, from_checkpoint) -> ModelOptimize
     model = enformer.Enformer(**enformer_params)
     
     optimizer = configure_optimizer(model, OPTIMIZER_PARAMS)
-
+    model, optimizer = ipex.optimize(model, optimizer=optimizer)
     if from_checkpoint == "last":
 
         # Start from last checkpoint
@@ -455,7 +464,7 @@ def main(args):
 
     if args.compile_model:
         model = torch.compile(model)
-
+    
     distributed_sampler_cfg = {
         "num_replicas": WORLD_SIZE,
         "rank": RANK
@@ -474,7 +483,8 @@ def main(args):
     # from torch.profiler import profile, record_function, ProfilerActivity
     
     trainer = Trainer(model, dataloaders, optimizer, 
-        device=DEVICE_TYPE, max_epochs=args.max_epochs, checkpoint_dir=args.ckpt_dir
+        device=DEVICE_TYPE, max_epochs=args.max_epochs, checkpoint_dir=args.ckpt_dir,
+        precision="half"
     )
 
     trainer.set_epoch(epoch+1)
@@ -545,6 +555,8 @@ def main(args):
                     # mlflow.log_metric("val_loss", loss_val)                        
 
         trainer.val_epoch_end()
+        torch.distributed.destroy_process_group()
+
 
 
     if RANK == 0 and mlflow is not None:

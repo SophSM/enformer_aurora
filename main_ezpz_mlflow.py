@@ -79,7 +79,7 @@ if (dtype := os.environ.get("DTYPE", None)) is not None:
     elif dtype.startswith("bf16"):
         DTYPE = torch.bfloat16
 
-
+print(DTYPE)
 ####################################################################################################
 
 # This is needed if using the --compile-model flag (as torch.compile requires a directory to store temporary artifacts)

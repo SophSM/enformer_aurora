@@ -79,9 +79,6 @@ if (dtype := os.environ.get("DTYPE", None)) is not None:
     elif dtype.startswith("bf16"):
         DTYPE = torch.bfloat16
 
-print(DTYPE)
-
-
 
 ####################################################################################################
 

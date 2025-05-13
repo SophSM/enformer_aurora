@@ -161,7 +161,7 @@ def validate(model, dataloader, criterion, world_size):
 
 class Trainer():
 
-    def __init__(self, model, dataloaders, optimizer, device, checkpoint_dir, log_freq=2, checkpoint_freq=1, precision: str = "single", gradient_clip=0.2, max_epochs=10):
+    def __init__(self, model, dataloaders, optimizer, device, checkpoint_dir, log_freq=2, checkpoint_freq=1, precision: str = "half", gradient_clip=0.2, max_epochs=10):
 
         self.model = model 
         self.train_dataloader, self.val_dataloader, self.test_dataloader = dataloaders

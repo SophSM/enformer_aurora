@@ -70,7 +70,7 @@ print(f"LOCAL_RANK: {LOCAL_RANK}")
 
 DEVICE_ID   = f"{DEVICE_TYPE}:{LOCAL_RANK}"
 
-DTYPE: torch.dtype = torch.get_default_dtype()
+# DTYPE: torch.dtype = torch.get_default_dtype()
 
 
 if (dtype := os.environ.get("DTYPE", None)) is not None:

@@ -232,9 +232,8 @@ class Trainer():
             self.optimizer.zero_grad()
             
             with autocast(device_type = DEVICE_TYPE):
-                model = ipex.optimize(self.model, dtype=torch.bfloat16)
-                pred = model(sequences)
-                # pred = self.model(sequences)
+                
+                pred = self.model(sequences)
                 loss = self.criterion(pred[head], targets)
                 loss_mn = loss.mean()
                 # self.scaler.scale(loss_mn).backward()

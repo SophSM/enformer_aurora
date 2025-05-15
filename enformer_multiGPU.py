@@ -2,6 +2,7 @@ from mpi4py import MPI
 import os, socket
 import torch
 from torch import nn, einsum
+import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 import intel_extension_for_pytorch as ipex
 import oneccl_bindings_for_pytorch as torch_ccl
@@ -594,12 +595,12 @@ class HDF5Dataset(Dataset):
                 sequence_mouse = sequence_mouse[::-1, ::-1].copy()
                     
         sequence_human = sequence_human[ind_min:ind_max]
-        print(sequence_human.shape)
+        # print(sequence_human.shape)
 
         if self.hdf5_file_mouse is not None:
             # sequence_mouse = sequence_mouse[ind_min:ind_max]
             sequence_mouse = sequence_mouse # (131072, 4)
-            print(sequence_mouse.shape)
+            # print(sequence_mouse.shape)
 
         data_point = {
             'sequence_human': torch.tensor(sequence_human).float(), 
@@ -607,9 +608,9 @@ class HDF5Dataset(Dataset):
             'shift': shift,
             'complementary': reverse_strand
         }
-        print(f"Human sequence {sequence_human.shape}")
+        # print(f"Human sequence {sequence_human.shape}")
         if self.hdf5_file_mouse is not None:
-            print(f"Mouse sequence {sequence_mouse.shape}")
+            # print(f"Mouse sequence {sequence_mouse.shape}")
             data_point['sequence_mouse'] = torch.tensor(sequence_mouse).float()
             data_point['target_mouse']   = torch.tensor(target_mouse)
 
@@ -645,7 +646,7 @@ def create_step_function(model, optimizer, clip_norm=0.2):
         torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
         optimizer.step()
 
-        return loss.item()
+        return loss
     
     return train_step
 
@@ -676,13 +677,14 @@ num_warmup_steps = 5000
 global_step = 0
 
 train_step = create_step_function(model, optimizer)
-steps_per_epoch = 2
+steps_per_epoch = 20
 num_epochs = len(train_loader) // steps_per_epoch
 
 epoch = 0
 data_it = iter(train_loader)
 for epoch in range(num_epochs):
-    print(epoch)
+    print(f"Epoch: {epoch + 1}")
+    total_loss_human = 0
     sampler.set_epoch(epoch)
     for _ in tqdm(range(steps_per_epoch)):
         global_step += 1
@@ -690,17 +692,20 @@ for epoch in range(num_epochs):
         # Warmup learning rate
         if global_step >= 1:
             lr_frac = min(1.0, global_step / max(1.0, num_warmup_steps))
-            lr = target_learning_rate * lr_frac * SIZE
+            lr = target_learning_rate * lr_frac # * SIZE ??
             for param_group in optimizer.param_groups:
                 param_group['lr'] = lr
 
         # batch_human, batch_mouse = next(data_it)
         batch_human = next(data_it)
         loss_human = train_step(batch_human, head='human')
+        total_loss_human += loss_human
         # loss_mouse = train_step(batch_mouse, head='mouse')
 
+    dist.all_reduce(total_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
     # End of epoch
-    print()
-    print(f"Epoch: {epoch + 1}, loss_human: {loss_human:.4f}, learning_rate: {lr:.6f}")
+    if RANK == 0: # print the loss only in one gpu to avoid more clutter
+        print()
+        print(f"Epoch: {epoch + 1}, loss_human: {total_loss_human.item() / steps_per_epoch:.6f}, learning_rate: {lr:.6f}")
 
 torch.distributed.destroy_process_group()

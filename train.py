@@ -1,41 +1,29 @@
+import torch
+import intel_extension_for_pytorch as ipex
+import oneccl_bindings_for_pytorch as torch_ccl
 from mpi4py import MPI
 import os, socket
-import torch
 from torch import nn, einsum
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-import intel_extension_for_pytorch as ipex
-import oneccl_bindings_for_pytorch as torch_ccl
 import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from torch.utils.data.distributed import DistributedSampler
+# from utils import model, dataset
+# from model import Enformer
+# from dataset import HDF5Dataset, get_dataloaders
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from einops.layers.torch import Rearrange
 from einops import rearrange
 from typing import Literal
-from tqdm import tqdm
-import os
 import h5py
 import numpy as np
 from easydict import EasyDict
+import re
+from tqdm import tqdm
+import argparse
 
-SIZE = MPI.COMM_WORLD.Get_size()
-RANK = MPI.COMM_WORLD.Get_rank()
-LOCAL_RANK = os.environ.get('PALS_LOCAL_RANKID')
-os.environ['RANK'] = str(RANK)
-os.environ['WORLD_SIZE'] = str(SIZE)
-MASTER_ADDR = socket.gethostname() if RANK == 0 else None
-MASTER_ADDR = MPI.COMM_WORLD.bcast(MASTER_ADDR, root=0)
-os.environ['MASTER_ADDR'] = f"{MASTER_ADDR}.hsn.cm.aurora.alcf.anl.gov"
-os.environ['MASTER_PORT'] = str(2345)
-# print(f"DDP: Hi from rank {RANK} of {SIZE} with local rank {LOCAL_RANK}. {MASTER_ADDR}")
-
-# DDP: initialize distributed communication with nccl backend
-torch.distributed.init_process_group(backend='ccl', init_method='env://', rank=int(RANK), world_size=int(SIZE))
-
-# DDP: pin GPU to local rank.
-torch.xpu.set_device(int(LOCAL_RANK))
-device = torch.device('xpu')
-torch.manual_seed(0)
 
 class MultiHeadAttention(nn.Module):
     """multi-head attention"""
@@ -617,113 +605,255 @@ class HDF5Dataset(Dataset):
         return EasyDict(data_point)
 
 
-def build_model_and_optimizer(enformer_params):
+def init_distributed():
+    '''
+    Initialize the multi-GPU parallelization
+    '''
+    _size = MPI.COMM_WORLD.Get_size()
+    _rank = MPI.COMM_WORLD.Get_rank()
+    _local_rank = os.environ.get('PALS_LOCAL_RANKID')
+    os.environ['RANK'] = str(_rank)
+    os.environ['WORLD_SIZE'] = str(_size)
+    _master_addr = socket.gethostname() if _rank == 0 else None
+    _master_addr = MPI.COMM_WORLD.bcast(_master_addr, root=0)
+    os.environ['MASTER_ADDR'] = f"{_master_addr}.hsn.cm.aurora.alcf.anl.gov"
+    os.environ['MASTER_PORT'] = str(2345)
+    # print(f"DDP: Hi from rank {RANK} of {SIZE} with local rank {LOCAL_RANK}. {MASTER_ADDR}")
+    return _size, _rank, _local_rank
+
+
+
+def build_model_and_optimizer(enformer_params, from_checkpoint, ckpt_dir, _device, _rank):
     model = Enformer(**enformer_params)
     optimizer = torch.optim.Adam(
         model.parameters(), 
-        lr=0, 
+        lr=0.0, 
         betas=(0.9, 0.999), 
         eps=1e-8, 
         weight_decay=1e-3
     )
-    return model, optimizer
+    if from_checkpoint == "last":
+        regex = re.compile("checkpoint_epoch_(.*).pth")
+        ckpt_files = os.listdir(ckpt_dir)
+        last_epoch = max([int(regex.match(file).group(1)) for file in ckpt_files])
+        ckpt_path = f"{ckpt_dir}/checkpoint_epoch_{str(last_epoch)}.pth" 
+        print(f"Checkpoint restored from {ckpt_path}")
+        ckpt = torch.load(ckpt_path, map_location='cpu')
+        assert (
+            ckpt is not None
+            and isinstance(ckpt, dict)
+            and 'optimizer_state_dict' in ckpt
+            and 'model_state_dict' in ckpt
+        )
+        optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+        for state in optimizer.state.values():
+            # Check if the state is a tensor and move it to the correct device
+            if isinstance(state, torch.Tensor):
+                state.data = state.data.to(_device)
+            elif isinstance(state, dict):
+                for key, value in state.items():
+                    if isinstance(value, torch.Tensor):
+                        state[key] = value.to(_device)
 
+
+        state_dict = ckpt['model_state_dict']
+        unwanted_prefix = '_orig_mod.module.'
+        for k, _ in list(state_dict.items()):
+            if k.startswith(unwanted_prefix):
+                state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+        model.load_state_dict(state_dict)
+        
+        epoch = ckpt['epoch']
+        
+        ckpt = None  # free up memory
     
-def train_step(batch, optimizer):
-    model.train()
+    elif from_checkpoint is False:
 
-    losses = {}
-    for head in ['human', 'mouse']:
-        optimizer.zero_grad()
+        epoch = 0
+        if _rank == 0:
+            print(f"No checkpoint was loaded. Training model from scratch...")
+    else:
+        raise ValueError(f"Only supported values for from_checkpoint are \"last\" or False, got {from_checkpoint=}")
 
-        sequences = batch[f'sequence_{head}'].to(device)
-        target = batch[f'target_{head}'].to(device)
+    model.to(_device)
+    model, optimizer = ipex.optimize(model, optimizer=optimizer)
+    model = DDP(model, find_unused_parameters = True, broadcast_buffers=False )
 
-        outputs = model(sequences)
-        loss = criterion(outputs[head], target)
-        loss_mn = loss.mean()
-        loss_mn.backward()
-        losses[head] = loss_mn
+    return model, optimizer, epoch
 
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.2)
-        optimizer.step()
-    return losses
+def save_checkpoint(model, optimizer, epoch, checkpoint_dir):
 
-# --------- Main -----------
-human_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/train_human.hdf5"
-mouse_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/train_mouse.hdf5"
+    """Saves model, optimizer, and scaler states."""
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
+    
+    checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch}.pth")
+    
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scaler_state_dict': None,
+    }
 
-dataset_train = HDF5Dataset(hdf5_file_human = human_hdf5,
-                             hdf5_file_mouse = mouse_hdf5,
+    torch.save(checkpoint, checkpoint_path)
+    print(f"Checkpoint saved at {checkpoint_path}")
+
+class Trainer():
+    def __init__(self, model, dataloaders, optimizer, device, checkpoint_dir, _rank, log_freq=2, checkpoint_freq=1, gradient_clip=0.2, max_epochs=10):
+        self.model = model
+        self.rank = _rank
+        # self.train_dataloader, self.val_dataloader, self.test_dataloader = dataloaders
+        self.train_dataloader = dataloaders
+        self.species = ["human", "mouse"]
+
+        self.optimizer = optimizer
+        self.device = device
+        
+        # self.n_step = 0 # global_step
+        # self.nval_step = 0        
+        self.current_epoch = 0
+        self.max_epochs = max_epochs
+
+        self._log_freq = log_freq
+        self._checkpoint_freq = checkpoint_freq
+
+        self.checkpoint_dir = checkpoint_dir 
+
+        self.gradient_clip = gradient_clip
+        self.initialize()
+    
+    def initialize(self):
+        # runs only once
+        self.iter = iter(self.train_dataloader)
+        # self.val_iter = iter(self.val_dataloader)
+        self.criterion = nn.PoissonNLLLoss(log_input=False, reduction="none")
+        # self._train_outputs = []
+        # self._val_outputs = []
+
+    def train_step(self):
+        # forward and backward passes
+        # self.n_step += 1
+        try:
+            batch = next(self.iter)
+        except StopIteration: # if all batches have been consumed, reset iterator
+            self.iter = iter(self.train_dataloader)
+            batch = next(self.iter)
+        losses = {}
+        for head in self.species:
+            self.optimizer.zero_grad()
+            sequences = batch[f'sequence_{head}'].to(self.device)
+            target = batch[f'target_{head}'].to(self.device)
+
+            outputs = self.model(sequences)
+            loss = self.criterion(outputs[head], target)
+            loss_mn = loss.mean()
+            loss_mn.backward()
+            losses[head] = loss_mn
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.gradient_clip)
+            self.optimizer.step()
+        return losses
+
+    def train_epoch_end(self):
+        print(f"Current epoch: {self.current_epoch}")
+        # if self.rank == 0 and (self.current_epoch % self._checkpoint_freq) == 0:
+        save_checkpoint(self.model, self.optimizer, self.current_epoch, self.checkpoint_dir)
+
+        # sum(self._train_outputs.append(loss_mn)) / dist.get_world_size()
+
+        # self.n_step = 0
+        self.current_epoch += 1
+    
+    def set_epoch(self, epoch):
+        self.current_epoch = epoch
+
+
+
+def main(args):
+    '''
+    Arguments
+        from_checkpoint: start training from a checkpoint
+        ckpt_dir: directory of checkpoints
+        human_data: hdf5 file path
+        mouse_data: hdf5 file path
+        max_epochs: maximum number of epochs
+        num_warmup_steps: number of steps to warmup the training
+    '''
+    # ---Set up multi-GPU resource distribution---
+    SIZE, RANK, LOCAL_RANK = init_distributed()
+    torch.distributed.init_process_group(backend='ccl', init_method='env://', rank=int(RANK), world_size=int(SIZE))
+
+    torch.xpu.set_device(int(LOCAL_RANK)) # pin GPU to local rank
+    device = torch.device('xpu')
+    torch.manual_seed(0)
+
+    # ---Load enformer parameters and optimizer---
+    enformer_params = dict(channels= 1536, num_heads=8, num_transformer_layers=11, prediction_head="both")
+    from_checkpoint = args.from_checkpoint if args.from_checkpoint is not None else False
+    model, optimizer, epoch = build_model_and_optimizer(enformer_params, from_checkpoint, args.ckpt_dir, device, RANK)
+
+    # ---Load data---
+    dataset_train = HDF5Dataset(hdf5_file_human = args.human_data,
+                             hdf5_file_mouse = args.mouse_data,
                              shift_augmentation=True, 
                              complementary_chain_augmentation=True)
 
-# sampler will split the full data between GPUs
-sampler = DistributedSampler(dataset_train, shuffle = True,  num_replicas=SIZE, rank=RANK, seed=0)
-# each GPU will recieve 2 samples at a time
-train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = 2)
+    # sampler will split the full data between GPUs
+    sampler = DistributedSampler(dataset_train, shuffle = True,  num_replicas=SIZE, rank=RANK, seed=0)
+    # each GPU will recieve 2 samples at a time
+    train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = 2)
 
-enformer_params = dict(channels= 1536, num_heads=8, num_transformer_layers=11, prediction_head="both")
-criterion = nn.PoissonNLLLoss(log_input=False, reduction="none")
-criterion = criterion.to(device)
-model, optimizer = build_model_and_optimizer(enformer_params)
-model.to(device)
-model, optimizer = ipex.optimize(model, optimizer=optimizer)
+    # ---Train loop---
 
-model = DDP(model, find_unused_parameters = True, broadcast_buffers=False )
+    trainer = Trainer(model, train_loader, optimizer, 
+        device, checkpoint_dir=args.ckpt_dir, _rank = RANK, max_epochs=args.max_epochs
+    )
 
-'''
+    trainer.set_epoch(epoch+1)
+    num_warmup_steps = -1 if args.num_warmup_steps is None else args.num_warmup_steps
+    target_learning_rate = 5e-4
+    steps_per_epoch = 20
+    global_step = 0
 
-- to avoid error of one of "the variables needed for gradient computation has been modified by 
-an inplace operation" use broadcast_buffers=False  https://github.com/pytorch/pytorch/issues/62474
+    for n_epoch in range(args.max_epochs):
+        model.train()
+        total_loss_human = 0
+        total_loss_mouse = 0
+        sampler.set_epoch(n_epoch)
+        if RANK == 0:
+            print(f"Epoch: {n_epoch + 1}")
+                
+        for _ in tqdm(range(steps_per_epoch)):
+            global_step += 1
+            if global_step >= 1:
+                learning_rate_frac = min(1.0, global_step / max(1.0, num_warmup_steps))                
+                current_lr = target_learning_rate * learning_rate_frac
+                
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = current_lr
+            
+            losses = trainer.train_step()
+            total_loss_human += losses['human']
+            total_loss_mouse += losses['mouse']
+        
+        
+        dist.all_reduce(total_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+        dist.all_reduce(total_loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+        # End of epoch
+        if RANK == 0: # print the loss only in one gpu to avoid more clutter
+            print()
+            print(f"Epoch: {epoch + 1}, loss_human: {total_loss_human.item() / steps_per_epoch:.6f}, loss_mouse: {total_loss_mouse.item() / steps_per_epoch:.6f}, learning_rate: {current_lr:.6f}")
+            trainer.train_epoch_end()
+    torch.distributed.destroy_process_group()
 
-- to avoid error of one of "RuntimeError: Expected to have finished 
-reduction in the prior iteration before starting a new one. This error indicates that your module has parameters that were not used in producing loss" 
-set find_unused_parameters= True  https://github.com/pytorch/pytorch/issues/43259
-
-This results in a warning:
-[rank13]:[W516 20:32:22.748237271 reducer.cpp:1400] Warning: find_unused_parameters=True was specified in DDP constructor,
-but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph 
-every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, 
-consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations 
-to have unused parameters. (function operator())
-'''
-
-target_learning_rate = 5e-4
-num_warmup_steps = 5000
-global_step = 0
-
-steps_per_epoch = 20
-num_epochs = len(train_loader) // steps_per_epoch
-
-epoch = 0
-data_it = iter(train_loader)
-for epoch in range(num_epochs):
-    if RANK == 0: 
-        print(f"Epoch: {epoch + 1}")
-    total_loss_human = 0
-    total_loss_mouse = 0
-    sampler.set_epoch(epoch)
-    for _ in tqdm(range(steps_per_epoch)):
-        global_step += 1
-
-        # Warmup learning rate
-        if global_step >= 1:
-            lr_frac = min(1.0, global_step / max(1.0, num_warmup_steps))
-            lr = target_learning_rate * lr_frac # * SIZE ??
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr
-        # forward
-        batch = next(data_it)
-        losses = train_step(batch, optimizer)
-        total_loss_human += losses['human']
-        total_loss_mouse += losses['mouse']
-
-    dist.all_reduce(total_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-    dist.all_reduce(total_loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-    # End of epoch
-    if RANK == 0: # print the loss only in one gpu to avoid more clutter
-        print()
-        print(f"Epoch: {epoch + 1}, loss_human: {total_loss_human.item() / steps_per_epoch:.6f}, loss_mouse: {total_loss_mouse.item() / steps_per_epoch:.6f}, learning_rate: {lr:.6f}")
-
-torch.distributed.destroy_process_group()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--num_warmup_steps", type=int, default=5000)    
+    parser.add_argument("--max_epochs", "--max-epochs", dest="max_epochs", type=int, default=1000)    
+    parser.add_argument("--from-checkpoint", "--from_checkpoint", "--from-ckpt", "--from_ckpt", dest="from_checkpoint", type=str, default=None)
+    parser.add_argument("--ckpt-dir", "--checkpoint-dir", "--ckpt_dir", "--checkpoint_dir", dest="ckpt_dir", 
+                        type=str, default="/lus/flare/projects/GeomicVar/ssalazar/projects/enformer_retraining/aurora_checkpoints")                        
+    parser.add_argument("--human_data", default="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/train_human.hdf5")
+    parser.add_argument("--mouse_data", default="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/train_mouse.hdf5")
+    args = parser.parse_args()
+    main(args)

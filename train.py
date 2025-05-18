@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from utils import model, dataset
 from model import Enformer
-from dataset import HDF5Dataset
+from dataset import get_datasets
 import re
 from tqdm import tqdm
 import argparse
@@ -112,11 +112,11 @@ def save_checkpoint(model, optimizer, epoch, checkpoint_dir):
     print(f"Checkpoint saved at {checkpoint_path}")
 
 class Trainer():
-    def __init__(self, model, dataloaders, optimizer, device, checkpoint_dir, _rank, log_freq=2, checkpoint_freq=1, gradient_clip=0.2, max_epochs=10):
+    def __init__(self, model, train_dataloader, val_dataloader, optimizer, device, checkpoint_dir, _rank, log_freq=2, checkpoint_freq=1, gradient_clip=0.2, max_epochs=10):
         self.model = model
         self.rank = _rank
-        # self.train_dataloader, self.val_dataloader, self.test_dataloader = dataloaders
-        self.train_dataloader = dataloaders
+        self.train_dataloader = train_dataloader
+        self.val_dataloader = val_dataloader
         self.species = ["human", "mouse"]
 
         self.optimizer = optimizer
@@ -138,7 +138,7 @@ class Trainer():
     def initialize(self):
         # runs only once
         self.iter = iter(self.train_dataloader)
-        # self.val_iter = iter(self.val_dataloader)
+        self.val_iter = iter(self.val_dataloader)
         self.criterion = nn.PoissonNLLLoss(log_input=False, reduction="none")
         # self._train_outputs = []
         # self._val_outputs = []
@@ -165,6 +165,23 @@ class Trainer():
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.gradient_clip)
             self.optimizer.step()
         return losses
+    
+    def val_step(self):
+        try:
+            batch = next(self.val_iter)
+        except StopIteration: # if all batches have been consumed, reset iterator
+            self.val_iter = iter(self.val_dataloader)
+            batch = next(self.val_iter)
+        val_losses = {}
+        for head in self.species:
+            val_sequences = batch[f'sequence_{head}'].to(self.device)
+            val_target = batch[f'target_{head}'].to(self.device)
+
+            val_outputs = self.model(val_sequences)
+            val_loss = self.criterion(val_outputs[head], val_target)
+            val_loss_mn = val_loss.mean()
+            val_losses[head] = val_loss_mn
+        return val_losses
 
     def train_epoch_end(self):
         print(f"Current epoch: {self.current_epoch}")
@@ -180,7 +197,6 @@ class Trainer():
         self.current_epoch = epoch
 
 
-
 def main(args):
     '''
     Arguments
@@ -188,8 +204,10 @@ def main(args):
         ckpt_dir: directory of checkpoints
         human_data: hdf5 file path
         mouse_data: hdf5 file path
+        batch_size
         max_epochs: maximum number of epochs
         num_warmup_steps: number of steps to warmup the training
+        split_lengths: from train sequences, how many use for train and validation [n_train, n_validation]
     '''
     # ---Set up multi-GPU resource distribution---
     SIZE, RANK, LOCAL_RANK = init_distributed()
@@ -205,19 +223,18 @@ def main(args):
     model, optimizer, epoch = build_model_and_optimizer(enformer_params, from_checkpoint, args.ckpt_dir, device, RANK)
 
     # ---Load data---
-    dataset_train = HDF5Dataset(hdf5_file_human = args.human_data,
-                             hdf5_file_mouse = args.mouse_data,
-                             shift_augmentation=True, 
-                             complementary_chain_augmentation=True)
+    dataset_train, dataset_val = get_datasets(hdf5_file_human = args.human_data, hdf5_file_mouse = args.mouse_data)
 
     # sampler will split the full data between GPUs
     sampler = DistributedSampler(dataset_train, shuffle = True,  num_replicas=SIZE, rank=RANK, seed=0)
+    sampler_val = DistributedSampler(dataset_val, shuffle = True,  num_replicas=SIZE, rank=RANK, seed=0)
     # each GPU will recieve 2 samples at a time
-    train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = 2)
-
+    train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = args.batch_size)
+    val_loader = DataLoader(dataset_val, sampler = sampler_val, batch_size = args.batch_size)
+    
     # ---Train loop---
 
-    trainer = Trainer(model, train_loader, optimizer, 
+    trainer = Trainer(model, train_loader,val_loader, optimizer, 
         device, checkpoint_dir=args.ckpt_dir, _rank = RANK, max_epochs=args.max_epochs
     )
 
@@ -251,17 +268,35 @@ def main(args):
         
         dist.all_reduce(total_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
         dist.all_reduce(total_loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+        
+        # validation step
+        model.eval()
+        with torch.no_grad():
+            val_losses = trainer.val_step()
+        
+        val_loss_human = val_losses['human']
+        val_loss_mouse = val_losses['mouse']
+        dist.all_reduce(val_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+        dist.all_reduce(val_loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+        
+        
         # End of epoch
         if RANK == 0: # print the loss only in one gpu to avoid more clutter
             print()
-            print(f"Epoch: {epoch + 1}, loss_human: {total_loss_human.item() / steps_per_epoch:.6f}, loss_mouse: {total_loss_mouse.item() / steps_per_epoch:.6f}, learning_rate: {current_lr:.6f}")
+            print(f"Epoch: {n_epoch + 1}, "
+              f"train_loss_human: {total_loss_human.item() / steps_per_epoch:.6f}, "
+              f"train_loss_mouse: {total_loss_mouse.item() / steps_per_epoch:.6f}, "
+              f"val_loss_human: {val_loss_human.item():.6f}, "
+              f"val_loss_mouse: {val_loss_mouse.item():.6f}, "
+              f"learning_rate: {current_lr:.6f}")
             trainer.train_epoch_end()
     torch.distributed.destroy_process_group()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_warmup_steps", type=int, default=5000)    
-    parser.add_argument("--max_epochs", "--max-epochs", dest="max_epochs", type=int, default=1000)    
+    parser.add_argument("--max_epochs", "--max-epochs", dest="max_epochs", type=int, default=1000)
+    parser.add_argument("--batch_size", dest="batch_size", type=int, default=2)
     parser.add_argument("--from-checkpoint", "--from_checkpoint", "--from-ckpt", "--from_ckpt", dest="from_checkpoint", type=str, default=None)
     parser.add_argument("--ckpt-dir", "--checkpoint-dir", "--ckpt_dir", "--checkpoint_dir", dest="ckpt_dir", 
                         type=str, default="/lus/flare/projects/GeomicVar/ssalazar/projects/enformer_retraining/aurora_checkpoints")                        

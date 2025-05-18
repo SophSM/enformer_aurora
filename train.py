@@ -8,9 +8,8 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from utils import model, dataset
-from model import Enformer
-from dataset import get_datasets
+from utils.model import Enformer
+from utils.dataset import get_datasets
 import re
 from tqdm import tqdm
 import argparse

@@ -102,10 +102,10 @@ class HDF5Dataset(Dataset):
 
         return EasyDict(data_point)
 
-def get_datasets(hdf5_file_human_train, hdf5_file_mouse_train, split_lengths=None):
+def get_datasets(hdf5_file_human, hdf5_file_mouse, split_lengths=None):
     dataset_train = HDF5Dataset(
-        hdf5_file_human=hdf5_file_human_train,
-        hdf5_file_mouse=hdf5_file_mouse_train,
+        hdf5_file_human=hdf5_file_human,
+        hdf5_file_mouse=hdf5_file_mouse,
         shift_augmentation=True,
         complementary_chain_augmentation=True,
     )

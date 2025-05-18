@@ -82,12 +82,10 @@ class HDF5Dataset(Dataset):
                 sequence_mouse = sequence_mouse[::-1, ::-1].copy()
                     
         sequence_human = sequence_human[ind_min:ind_max]
-        print(sequence_human.shape)
 
         if self.hdf5_file_mouse is not None:
             # sequence_mouse = sequence_mouse[ind_min:ind_max]
             sequence_mouse = sequence_mouse # (131072, 4)
-            print(sequence_mouse.shape)
 
         data_point = {
             'sequence_human': torch.tensor(sequence_human).float(), 

@@ -237,7 +237,8 @@ def main(args):
     # ---Train loop---
 
     trainer = Trainer(model, train_loader,val_loader, optimizer, 
-        device, checkpoint_dir=args.ckpt_dir, _rank = RANK, max_epochs=args.max_epochs
+        device, checkpoint_dir=args.ckpt_dir, _rank = RANK, max_epochs=args.max_epochs,
+        checkpoint_freq=args.checkpoint_freq
     )
 
     trainer.set_epoch(epoch+1)
@@ -301,6 +302,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_warmup_steps", type=int, default=5000)    
     parser.add_argument("--max_epochs", "--max-epochs", dest="max_epochs", type=int, default=1000)
     parser.add_argument("--batch_size", dest="batch_size", type=int, default=1)
+    parser.add_argument("--checkpoint_freq", type = int, default=1)
     parser.add_argument("--from-checkpoint", "--from_checkpoint", "--from-ckpt", "--from_ckpt", dest="from_checkpoint", type=str, default=None)
     parser.add_argument("--ckpt-dir", "--checkpoint-dir", "--ckpt_dir", "--checkpoint_dir", dest="ckpt_dir", 
                         type=str, default="/lus/flare/projects/GeomicVar/ssalazar/projects/enformer_retraining/aurora_checkpoints")                        

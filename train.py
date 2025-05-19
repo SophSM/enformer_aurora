@@ -203,9 +203,10 @@ def main(args):
         ckpt_dir: directory of checkpoints
         human_data: hdf5 file path
         mouse_data: hdf5 file path
-        batch_size
+        batch_size: number of sequences per batch
         max_epochs: maximum number of epochs
         num_warmup_steps: number of steps to warmup the training
+        checkpoint_freq: 
         split_lengths: from train sequences, how many use for train and validation [n_train, n_validation]
     '''
     # ---Set up multi-GPU resource distribution---
@@ -254,7 +255,7 @@ def main(args):
         total_loss_mouse = 0
         sampler.set_epoch(n_epoch)
         if RANK == 0:
-            print(f"Epoch: {n_epoch + 1}")
+            print(f"Epoch: {n_epoch}")
         
         # for _ in tqdm(range(steps_per_epoch)):
         for _ in tqdm(range(len(train_loader))):
@@ -286,7 +287,7 @@ def main(args):
         
         if RANK == 0: # print the loss only in one gpu to avoid more clutter
             print()
-            print(f"Epoch: {n_epoch + 1}, "
+            print(f"Epoch: {n_epoch}, "
             f"train_loss_human: {total_loss_human.item() / len(train_loader):.6f}, "
             f"train_loss_mouse: {total_loss_mouse.item() / len(train_loader):.6f}, "
             f"val_loss_human: {val_loss_human.item().item():.6f},"

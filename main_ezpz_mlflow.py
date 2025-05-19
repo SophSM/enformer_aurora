@@ -345,7 +345,9 @@ def configure_optimizer(model, optimizer_params):
 
 
 def build_model_and_optimizer(
-    enformer_params, from_checkpoint
+    enformer_params,
+    from_checkpoint,
+    backend: str,
 ):  #  -> ModelOptimizerPair:
     rank = ezpz.get_rank()
     device_id = f"{ezpz.get_torch_device_type()}:{ezpz.get_local_rank()}"
@@ -420,7 +422,7 @@ def build_model_and_optimizer(
 
     logging.debug(f"{model=}")
 
-    if backend.lower() == "ddp":
+    if args.backend.lower() == "ddp":
         if ezpz.get_world_size() > 1:
             model = DDP(model, device_ids=[device_id], find_unused_parameters=False)
     elif backend.lower() in ("ds", "deepspeed"):
@@ -458,7 +460,7 @@ def main(args):
         mlflow.set_experiment(experiment_name=args.mlflow_expname)
         mlflow.start_run()
         mlflow.log_param("n_gpus", world_size)
-        mlflow.log_param("parallelization_backend", backend)
+        mlflow.log_param("parallelization_backend", args.backend)
 
     # 3*2**9 == 1536
     enformer_params = dict(
@@ -474,7 +476,9 @@ def main(args):
     )
 
     model, optimizer, epoch = build_model_and_optimizer(
-        enformer_params, from_checkpoint=args.from_checkpoint
+        enformer_params,
+        from_checkpoint=args.from_checkpoint,
+        backend=args.backend,
     )
 
     if args.compile_model:
@@ -668,7 +672,9 @@ def parse_args():
 
 if __name__ == "__main__":
 
+    # backend = os.environ.get("BACKEND", "DDP")
     args = parse_args()
-    _ = ezpz.setup_torch(backend=args.backend)
+    logger.info(f"backend: {args.backend}")
+    _ = ezpz.setup_torch(backend=str(args.backend))
 
     main(args)

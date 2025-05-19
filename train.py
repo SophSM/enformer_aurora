@@ -229,6 +229,7 @@ def main(args):
     sampler_val = DistributedSampler(dataset_val, shuffle = False,  num_replicas=SIZE, rank=RANK, seed=0)
     # each GPU will recieve batch_size samples at a time
     train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = args.batch_size)
+    
     if RANK == 0:
         print(f"Length of train loader {len(train_loader)}")
 
@@ -254,7 +255,9 @@ def main(args):
             print(f"Epoch: {n_epoch + 1}")
                 
         # for _ in tqdm(range(steps_per_epoch)):
-        for _ in range(0, len(train_loader)):
+        for i in range(0, len(train_loader)):
+            if RANK == 0:
+                print(f"Inner Step {i + 1}")
             model.train()
             total_loss_human = 0
             total_loss_mouse = 0

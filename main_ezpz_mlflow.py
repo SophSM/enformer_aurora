@@ -668,8 +668,6 @@ def parse_args():
 
 if __name__ == "__main__":
 
-    backend = os.environ.get("BACKEND", "DDP")
-    logger.info(f"backend: {backend}")
     args = parse_args()
     _ = ezpz.setup_torch(backend=args.backend)
 

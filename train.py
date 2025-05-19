@@ -231,7 +231,7 @@ def main(args):
     train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = args.batch_size)
     if RANK == 0:
         print(f"Length of train loader {len(train_loader)}")
-        
+
     val_loader = DataLoader(dataset_val, sampler = sampler_val, batch_size = args.batch_size)
     
     # ---Train loop---
@@ -247,15 +247,16 @@ def main(args):
     global_step = 0
 
     for n_epoch in range(args.max_epochs):
-        model.train()
-        total_loss_human = 0
-        total_loss_mouse = 0
+        
         sampler.set_epoch(n_epoch)
         if RANK == 0:
             print(f"Epoch: {n_epoch + 1}")
                 
         # for _ in tqdm(range(steps_per_epoch)):
         for _ in range(0, len(train_loader)):
+            model.train()
+            total_loss_human = 0
+            total_loss_mouse = 0
             global_step += 1
             while global_step < num_warmup_steps:
                 learning_rate_frac = min(1.0, global_step / max(1.0, num_warmup_steps))                
@@ -264,35 +265,35 @@ def main(args):
                 for param_group in optimizer.param_groups:
                     param_group['lr'] = current_lr
             
-        losses = trainer.train_step()
-        total_loss_human += losses['human']
-        total_loss_mouse += losses['mouse']
+            losses = trainer.train_step()
+            total_loss_human += losses['human']
+            total_loss_mouse += losses['mouse']
+        
+            dist.all_reduce(total_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+            dist.all_reduce(total_loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+        
+            # validation step
+            model.eval()
+            with torch.no_grad():
+                val_losses = trainer.val_step()
+        
+            val_loss_human = val_losses['human']
+            val_loss_mouse = val_losses['mouse']
+            dist.all_reduce(val_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+            dist.all_reduce(val_loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
         
         
-        dist.all_reduce(total_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-        dist.all_reduce(total_loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-        
-        # validation step
-        model.eval()
-        with torch.no_grad():
-            val_losses = trainer.val_step()
-        
-        val_loss_human = val_losses['human']
-        val_loss_mouse = val_losses['mouse']
-        dist.all_reduce(val_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-        dist.all_reduce(val_loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-        
-        
-        # End of epoch
-        if RANK == 0: # print the loss only in one gpu to avoid more clutter
-            print()
-            print(f"Epoch: {n_epoch + 1}, "
-              f"train_loss_human: {total_loss_human.item() / len(train_loader):.6f}, "
-              f"train_loss_mouse: {total_loss_mouse.item() / len(train_loader):.6f}, "
-              f"val_loss_human: {val_loss_human.item():.6f}, "
-              f"val_loss_mouse: {val_loss_mouse.item():.6f}, "
-              f"learning_rate: {current_lr:.6f}")
-            trainer.train_epoch_end()
+            # End of step
+            if RANK == 0: # print the loss only in one gpu to avoid more clutter
+                print()
+                print(f"Step: {global_step + 1}, "
+                f"train_loss_human: {total_loss_human.item() / len(train_loader):.6f}, "
+                f"train_loss_mouse: {total_loss_mouse.item() / len(train_loader):.6f}, "
+                f"val_loss_human: {val_loss_human.item():.6f}, "
+                f"val_loss_mouse: {val_loss_mouse.item():.6f}, "
+                f"learning_rate: {current_lr:.6f}")
+        trainer.train_epoch_end()
+    
     torch.distributed.destroy_process_group()
 
 if __name__ == "__main__":

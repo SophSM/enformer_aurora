@@ -1,3 +1,4 @@
+from typing import Optional
 import ezpz
 import torch
 
@@ -44,58 +45,16 @@ except Exception:
 from model import enformer
 from dataset import get_dataloaders
 
-# from IPython import embed
-
 SEQUENCE_LENGTH = 196_608
 TARGET_LENGTH = 896
 
-
-####################################################################################################
-
 logger = ezpz.get_logger(__name__)
-# logging.basicConfig(
-#    level=logging.INFO,
-#    format="%(asctime)s [%(levelname)s] %(message)s",
-#    handlers=[
-#       logging.StreamHandler()
-#    ]
-# )
-#
-# logger = logging.getLogger()
-
-####################################################################################################
 
 torch.set_float32_matmul_precision("medium")
 
-WORLD_SIZE = ezpz.get_world_size()  # MPI.COMM_WORLD.Get_size()
-logger.info(f"WORLD_SIZE: {WORLD_SIZE}")
-LOCAL_RANK = (
-    ezpz.get_local_rank()
-)  # MPI.COMM_WORLD.Get_rank() % torch.xpu.device_count()
-logger.info(f"LOCAL_RANK: {LOCAL_RANK}")
-
-# DEVICE_ID   = f"{DEVICE_TYPE}:{LOCAL_RANK}"
-
-DTYPE: torch.dtype = torch.get_default_dtype()
-
-
-if (dtype := os.environ.get("DTYPE", None)) is not None:
-    if dtype.startswith("fp16"):
-        DTYPE = torch.half
-    elif dtype.startswith("bf16"):
-        DTYPE = torch.bfloat16
-
-logger.info(DTYPE)
-####################################################################################################
 
 # This is needed if using the --compile-model flag (as torch.compile requires a directory to store temporary artifacts)
 os.environ["TMPDIR"] = Path(os.getcwd()).joinpath("tmp").as_posix()
-# os.environ["TMPDIR"] = "/lus/flare/projects/GeomicVar/ssalazar/projects/enformer_retraining/tmp"
-
-# def init_distributed():
-#     # dist.init_process_group(backend='nccl', init_method='env://')
-#     dist.init_process_group(backend='ccl', init_method='env://', rank=int(RANK), world_size=int(WORLD_SIZE))
-
 
 def is_distributed():
     return dist.is_available() and dist.is_initialized()
@@ -188,6 +147,7 @@ class Trainer:
         precision: str = "half",
         gradient_clip=0.2,
         max_epochs=10,
+        dtype: Optional[str | torch.dtype] = None,
     ):
 
         self.model = model
@@ -195,6 +155,7 @@ class Trainer:
         self.rank = ezpz.get_rank()
         self.world_size = ezpz.get_world_size()
         self.device_id = f"{ezpz.get_torch_device_type()}:{ezpz.get_local_rank()}"
+        self.dtype = torch.get_default_dtype() if dtype is None else dtype
 
         self.species = (
             ["human", "mouse"]
@@ -214,6 +175,9 @@ class Trainer:
         self._checkpoint_freq = checkpoint_freq
 
         self.precision = precision
+        assert self.precision in ["half", "single"], (
+            f"Invalid precision: {self.precision}"
+        )
 
         self.checkpoint_dir = checkpoint_dir
 
@@ -253,7 +217,7 @@ class Trainer:
 
             self.optimizer.zero_grad()
 
-            with autocast(device_type=ezpz.get_torch_device_type(), dtype=DTYPE):
+            with autocast(device_type=ezpz.get_torch_device_type(), dtype=self.dtype):
 
                 pred = self.model(sequences)
                 loss = self.criterion(pred[head], targets)
@@ -493,7 +457,7 @@ def main(args):
         mlflow.set_tracking_uri(uri=args.mlflow_uri)
         mlflow.set_experiment(experiment_name=args.mlflow_expname)
         mlflow.start_run()
-        mlflow.log_param("n_gpus", WORLD_SIZE)
+        mlflow.log_param("n_gpus", world_size)
         mlflow.log_param("parallelization_backend", backend)
 
     # 3*2**9 == 1536
@@ -533,11 +497,13 @@ def main(args):
 
     # from torch.profiler import profile, record_function, ProfilerActivity
 
+    dtype = torch.get_default_dtype() if args.dtype is None else args.dtype
     trainer = Trainer(
         model,
         dataloaders,
         optimizer,
         device=device_type,
+        dtype=dtype,
         max_epochs=args.max_epochs,
         checkpoint_dir=args.ckpt_dir,
         precision="half",
@@ -622,6 +588,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--backend", dest="backend", type=str, default="DDP")
+    parser.add_argument("--dtype", type=str, default=None)
     parser.add_argument("--batch_size", "--batch-size", type=int, default=2)
     parser.add_argument("--num_warmup_steps", type=int, default=None)
 

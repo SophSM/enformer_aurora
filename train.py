@@ -255,7 +255,7 @@ def main(args):
             print(f"Epoch: {n_epoch + 1}")
                 
         # for _ in tqdm(range(steps_per_epoch)):
-        for i in range(0, len(train_loader)):
+        for i in tqdm(range(len(train_loader))):
             if RANK == 0:
                 print(f"Inner Step {i + 1}")
             model.train()
@@ -296,6 +296,7 @@ def main(args):
                 f"val_loss_human: {val_loss_human.item():.6f}, "
                 f"val_loss_mouse: {val_loss_mouse.item():.6f}, "
                 f"learning_rate: {current_lr:.6f}")
+        
         trainer.train_epoch_end()
     
     torch.distributed.destroy_process_group()

@@ -261,7 +261,7 @@ def main(args):
             if RANK == 0:
                 print(f"Inner Step {i + 1}")
             global_step += 1
-            while global_step < num_warmup_steps:
+            if global_step < num_warmup_steps:
                 learning_rate_frac = min(1.0, global_step / max(1.0, num_warmup_steps))                
                 current_lr = target_learning_rate * learning_rate_frac
                 

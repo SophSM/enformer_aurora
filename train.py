@@ -257,9 +257,7 @@ def main(args):
             print(f"Epoch: {n_epoch + 1}")
         
         # for _ in tqdm(range(steps_per_epoch)):
-        for i in tqdm(range(len(train_loader))):
-            if RANK == 0:
-                print(f"Inner Step {i + 1}")
+        for _ in tqdm(range(len(train_loader))):
             global_step += 1
             if global_step < num_warmup_steps:
                 learning_rate_frac = min(1.0, global_step / max(1.0, num_warmup_steps))                
@@ -274,14 +272,6 @@ def main(args):
         
         dist.all_reduce(total_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
         dist.all_reduce(total_loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-
-        # End of step
-        if RANK == 0: # print the loss only in one gpu to avoid more clutter
-            print()
-            print(f"Epoch: {n_epoch + 1}, "
-            f"train_loss_human: {total_loss_human.item() / len(train_loader):.6f}, "
-            f"train_loss_mouse: {total_loss_mouse.item() / len(train_loader):.6f}, "
-            f"learning_rate: {current_lr:.6f}")
         
         # validation step
         model.eval()
@@ -297,6 +287,8 @@ def main(args):
         if RANK == 0: # print the loss only in one gpu to avoid more clutter
             print()
             print(f"Epoch: {n_epoch + 1}, "
+            f"train_loss_human: {total_loss_human.item() / len(train_loader):.6f}, "
+            f"train_loss_mouse: {total_loss_mouse.item() / len(train_loader):.6f}, "
             f"val_loss_human: {val_loss_human.item().item():.6f},"
             f"val_loss_mouse: {val_loss_mouse.item().item():.6f}, "
             f"learning_rate: {current_lr:.6f}")

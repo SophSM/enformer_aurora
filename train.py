@@ -226,9 +226,12 @@ def main(args):
 
     # sampler will split the full data between GPUs
     sampler = DistributedSampler(dataset_train, shuffle = True,  num_replicas=SIZE, rank=RANK, seed=0)
-    sampler_val = DistributedSampler(dataset_val, shuffle = True,  num_replicas=SIZE, rank=RANK, seed=0)
-    # each GPU will recieve 2 samples at a time
+    sampler_val = DistributedSampler(dataset_val, shuffle = False,  num_replicas=SIZE, rank=RANK, seed=0)
+    # each GPU will recieve batch_size samples at a time
     train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = args.batch_size)
+    if RANK == 0:
+        print(f"Length of train loader {len(train_loader)}")
+        
     val_loader = DataLoader(dataset_val, sampler = sampler_val, batch_size = args.batch_size)
     
     # ---Train loop---
@@ -240,7 +243,7 @@ def main(args):
     trainer.set_epoch(epoch+1)
     num_warmup_steps = -1 if args.num_warmup_steps is None else args.num_warmup_steps
     target_learning_rate = 5e-4
-    steps_per_epoch = 20
+    # steps_per_epoch = 20
     global_step = 0
 
     for n_epoch in range(args.max_epochs):
@@ -251,18 +254,19 @@ def main(args):
         if RANK == 0:
             print(f"Epoch: {n_epoch + 1}")
                 
-        for _ in tqdm(range(steps_per_epoch)):
+        # for _ in tqdm(range(steps_per_epoch)):
+        for _ in range(0, len(train_loader)):
             global_step += 1
-            if global_step >= 1:
+            while global_step < num_warmup_steps:
                 learning_rate_frac = min(1.0, global_step / max(1.0, num_warmup_steps))                
                 current_lr = target_learning_rate * learning_rate_frac
                 
                 for param_group in optimizer.param_groups:
                     param_group['lr'] = current_lr
             
-            losses = trainer.train_step()
-            total_loss_human += losses['human']
-            total_loss_mouse += losses['mouse']
+        losses = trainer.train_step()
+        total_loss_human += losses['human']
+        total_loss_mouse += losses['mouse']
         
         
         dist.all_reduce(total_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
@@ -283,8 +287,8 @@ def main(args):
         if RANK == 0: # print the loss only in one gpu to avoid more clutter
             print()
             print(f"Epoch: {n_epoch + 1}, "
-              f"train_loss_human: {total_loss_human.item() / steps_per_epoch:.6f}, "
-              f"train_loss_mouse: {total_loss_mouse.item() / steps_per_epoch:.6f}, "
+              f"train_loss_human: {total_loss_human.item() / len(train_loader):.6f}, "
+              f"train_loss_mouse: {total_loss_mouse.item() / len(train_loader):.6f}, "
               f"val_loss_human: {val_loss_human.item():.6f}, "
               f"val_loss_mouse: {val_loss_mouse.item():.6f}, "
               f"learning_rate: {current_lr:.6f}")
@@ -295,7 +299,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_warmup_steps", type=int, default=5000)    
     parser.add_argument("--max_epochs", "--max-epochs", dest="max_epochs", type=int, default=1000)
-    parser.add_argument("--batch_size", dest="batch_size", type=int, default=2)
+    parser.add_argument("--batch_size", dest="batch_size", type=int, default=1)
     parser.add_argument("--from-checkpoint", "--from_checkpoint", "--from-ckpt", "--from_ckpt", dest="from_checkpoint", type=str, default=None)
     parser.add_argument("--ckpt-dir", "--checkpoint-dir", "--ckpt_dir", "--checkpoint_dir", dest="ckpt_dir", 
                         type=str, default="/lus/flare/projects/GeomicVar/ssalazar/projects/enformer_retraining/aurora_checkpoints")                        

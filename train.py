@@ -276,7 +276,7 @@ def main(args):
         trainer.train_step_end() # does current_step += 1, saves if frequency reached
         
         # validation step
-        if trainer.current_step % args.val_freq:
+        if trainer.current_step % args.val_freq == 0:
             model.eval()
             with torch.no_grad():
                 val_losses = trainer.val_step()
@@ -290,7 +290,6 @@ def main(args):
             if RANK == 0: # print the loss only in one gpu to avoid more clutter
                 print()
                 print(f"Step: {trainer.current_step}, "
-            
                 f"val_loss_human: {val_loss_human.item()/ SIZE:.6f:.6f},"
                 f"val_loss_mouse: {val_loss_mouse.item()/ SIZE:.6f:.6f}, "
                 f"learning_rate: {current_lr:.6f}")

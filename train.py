@@ -36,6 +36,7 @@ def init_distributed():
 
 def build_model_and_optimizer(enformer_params, from_checkpoint, ckpt_dir, _device, _rank, _local_rank):
     model = Enformer(**enformer_params)
+    model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     optimizer = torch.optim.Adam(
         model.parameters(), 
         lr=0.0, 

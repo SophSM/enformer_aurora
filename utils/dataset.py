@@ -59,11 +59,13 @@ class HDF5Dataset(Dataset):
         with h5py.File(self.hdf5_file_human, 'r') as hdf:
             sequence_human = hdf[key][idx]
             target_human = hdf['target'][idx]
+            region_human = hdf['query_region'][idx]
         
         if self.hdf5_file_mouse is not None:
             with h5py.File(self.hdf5_file_mouse, 'r') as hdf:
                 sequence_mouse = hdf['sequence'][idx%self.n_mouse_seqs]
                 target_mouse = hdf['target'][idx%self.n_mouse_seqs]
+                region_mouse= hdf['query_region'][idx]
 
         # Crop full sequence:
         ind_min, ind_max = FULL_LENGTH//2-SEQLEN//2, FULL_LENGTH//2+SEQLEN//2
@@ -96,12 +98,14 @@ class HDF5Dataset(Dataset):
             'sequence_human': torch.tensor(sequence_human).float(), 
             'target_human': torch.tensor(target_human),            
             'shift': shift,
-            'complementary': reverse_strand
+            'complementary': reverse_strand,
+            'region_human': torch.tensor(region_human)
         }
 
         if self.hdf5_file_mouse is not None:
             data_point['sequence_mouse'] = torch.tensor(sequence_mouse).float()
             data_point['target_mouse']   = torch.tensor(target_mouse)
+            data_point['region_mouse'] = torch.tensor(region_mouse)
 
         return EasyDict(data_point)
 

@@ -218,12 +218,12 @@ def main(args):
     )
 
     logger = logging.getLogger()
-    if RANK == 0:
-        logger.info("Training started")
 
 
     # ---Set up multi-GPU resource distribution---
     SIZE, RANK, LOCAL_RANK = init_distributed()
+    if RANK == 0:
+        logger.info("Training started")
     torch.distributed.init_process_group(backend='ccl', init_method='env://', rank=int(RANK), world_size=int(SIZE))
 
     # torch.xpu.set_device(int(LOCAL_RANK)) # pin GPU to local rank

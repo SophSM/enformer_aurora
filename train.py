@@ -49,7 +49,8 @@ def build_model_and_optimizer(enformer_params, from_checkpoint, ckpt_dir, _devic
         ckpt_files = os.listdir(ckpt_dir)
         last_step = max([int(regex.match(file).group(1)) for file in ckpt_files])
         ckpt_path = f"{ckpt_dir}/checkpoint_step_{str(last_step)}.pth" 
-        print(f"Checkpoint restored from {ckpt_path}")
+        if _rank == 0:
+            print(f"Checkpoint restored from {ckpt_path}")
         ckpt = torch.load(ckpt_path, map_location='cpu')
         assert (
             ckpt is not None
@@ -75,14 +76,11 @@ def build_model_and_optimizer(enformer_params, from_checkpoint, ckpt_dir, _devic
                 state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
         model.load_state_dict(state_dict)
         
-        epoch = ckpt['epoch']
         step = ckpt['step']
         
         ckpt = None  # free up memory
     
     elif from_checkpoint is False:
-
-        epoch = 0
         step = 0
         if _rank == 0:
             print(f"No checkpoint was loaded. Training model from scratch...")
@@ -93,9 +91,9 @@ def build_model_and_optimizer(enformer_params, from_checkpoint, ckpt_dir, _devic
     model, optimizer = ipex.optimize(model, optimizer=optimizer)
     model = DDP(model, find_unused_parameters = True, broadcast_buffers=False )
 
-    return model, optimizer, epoch, step
+    return model, optimizer, step
 
-def save_checkpoint(model, optimizer, epoch, step, checkpoint_dir):
+def save_checkpoint(model, optimizer, step, checkpoint_dir):
 
     """Saves model, optimizer, and scaler states."""
     if not os.path.exists(checkpoint_dir):
@@ -105,7 +103,6 @@ def save_checkpoint(model, optimizer, epoch, step, checkpoint_dir):
     
     checkpoint = {
         'step': step,
-        'epoch': epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'scaler_state_dict': None,
@@ -115,9 +112,10 @@ def save_checkpoint(model, optimizer, epoch, step, checkpoint_dir):
     print(f"Checkpoint saved at {checkpoint_path}")
 
 class Trainer():
-    def __init__(self, model, train_dataloader, val_dataloader, optimizer, device, checkpoint_dir, _rank, log_freq=2, checkpoint_freq=2, gradient_clip=0.2):
+    def __init__(self, model, train_dataloader, val_dataloader, optimizer, sampler, device, checkpoint_dir, _rank, log_freq=2, checkpoint_freq=2, gradient_clip=0.2):
         self.model = model
         self.rank = _rank
+        self.sampler = sampler
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
         self.species = ["human", "mouse"]
@@ -126,9 +124,6 @@ class Trainer():
         self.device = device
         
         self.current_step = 0 # initialize class step counter on zero 
-        # self.nval_step = 0        
-        self.current_epoch = 0 # initialize class epoch counter on zero 
-
         self._log_freq = log_freq
         self._checkpoint_freq = checkpoint_freq
 
@@ -142,8 +137,6 @@ class Trainer():
         self.iter = iter(self.train_dataloader)
         self.val_iter = iter(self.val_dataloader)
         self.criterion = nn.PoissonNLLLoss(log_input=False, reduction="none")
-        # self._train_outputs = []
-        # self._val_outputs = []
 
     def train_step(self):
         # forward and backward passes
@@ -151,6 +144,7 @@ class Trainer():
         try:
             batch = next(self.iter)
         except StopIteration: # if all batches have been consumed, reset iterator
+            self.sampler.set_epoch(self.current_step)
             self.iter = iter(self.train_dataloader)
             batch = next(self.iter)
         losses = {}
@@ -188,23 +182,13 @@ class Trainer():
     def train_step_end(self):
         
         if self.rank == 0 and (self.current_step % self._checkpoint_freq) == 0:
-            save_checkpoint(self.model, self.optimizer, self.current_epoch, self.current_step, self.checkpoint_dir)
+            save_checkpoint(self.model, self.optimizer, self.current_step, self.checkpoint_dir)
             print(f"Checkpoint saved")
-
         self.current_step += 1
 
-    def train_epoch_end(self):
-        
-        if self.rank == 0:
-            save_checkpoint(self.model, self.optimizer, self.current_epoch, self.current_step, self.checkpoint_dir)
-            print(f"Checkpoint saved")
-
-        self.current_epoch += 1
-    
     def set_step(self, step):
         self.current_step = step
-    def set_epoch(self, epoch):
-        self.current_epoch = epoch
+
 
 
 def main(args):
@@ -217,7 +201,7 @@ def main(args):
         human_val: human validation data hdf5 file path
         mouse_val: mouse validation data hdf5 file path
         batch_size: number of sequences per batch
-        max_epochs: maximum number of epochs
+        max_steps: maximum number of training steps
         num_warmup_steps: number of steps to warmup the training
         checkpoint_freq: 
         split_lengths: from train sequences, how many use for train and validation [n_train, n_validation]
@@ -234,7 +218,7 @@ def main(args):
     # ---Load enformer parameters and optimizer---
     enformer_params = dict(channels= 1536, num_heads=8, num_transformer_layers=11, prediction_head="both")
     from_checkpoint = args.from_checkpoint if args.from_checkpoint is not None else False
-    model, optimizer, epoch, step = build_model_and_optimizer(enformer_params, from_checkpoint, args.ckpt_dir, device, RANK)
+    model, optimizer, step = build_model_and_optimizer(enformer_params, from_checkpoint, args.ckpt_dir, device, RANK)
 
     # ---Load data---
     dataset_train, dataset_val = get_datasets(train_human = args.human_train, 
@@ -258,78 +242,65 @@ def main(args):
 
     trainer = Trainer(model, train_loader,val_loader, optimizer, 
         device, checkpoint_dir=args.ckpt_dir, _rank = RANK,
-        checkpoint_freq=args.checkpoint_freq
+        checkpoint_freq=args.checkpoint_freq, sampler=sampler
     )
-
   
     num_warmup_steps = -1 if args.num_warmup_steps is None else args.num_warmup_steps
     target_learning_rate = 5e-4
-    # steps_per_epoch = 20
-    global_step = step
-    trainer.set_step(global_step) # set step from checkpoint if loaded, else is 0
-    trainer.set_epoch(epoch) # set epoch from checkpoint if loaded, else is 0
-    # for n_epoch in range(args.max_epochs):
-    while trainer.current_epoch < args.max_epochs:
-        model.train()
-        
-        sampler.set_epoch(trainer.current_epoch)
-        if RANK == 0:
-            print(f"Epoch: {trainer.current_epoch}")
-        
-        # for _ in tqdm(range(steps_per_epoch)):
-        for _ in tqdm(range(len(train_loader))):
-            if RANK == 0:
-                print(f"Step: {global_step}")
-            # total_loss_human = 0
-            # total_loss_mouse = 0
-            global_step += 1
-            if global_step < num_warmup_steps:
-                learning_rate_frac = min(1.0, global_step / max(1.0, num_warmup_steps))                
-                current_lr = target_learning_rate * learning_rate_frac
-                
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = current_lr
-            
-            losses = trainer.train_step()
-            # total_loss_human += losses['human']
-            # total_loss_mouse += losses['mouse']
-        
-            dist.all_reduce(losses['human'], op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-            dist.all_reduce(losses['mouse'], op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-
-            if RANK == 0:
-                print()
-                print(f"Step: {global_step},"
-                      f"train_loss_human: {losses['human'].item() / SIZE:.6f}, "
-                      f"train_loss_mouse: {losses['mouse'].item() / SIZE:.6f}, ")
-            trainer.train_step_end() # does current_step += 1
-        # validation step
-        model.eval()
-        with torch.no_grad():
-            val_losses = trainer.val_step()
-        
-        val_loss_human = val_losses['human']
-        val_loss_mouse = val_losses['mouse']
-        
-        dist.all_reduce(val_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-        dist.all_reduce(val_loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-        
-        if RANK == 0: # print the loss only in one gpu to avoid more clutter
-            print()
-            print(f"Epoch: {epoch}, "
-            
-            f"val_loss_human: {val_loss_human.item()/ SIZE:.6f:.6f},"
-            f"val_loss_mouse: {val_loss_mouse.item()/ SIZE:.6f:.6f}, "
-            f"learning_rate: {current_lr:.6f}")
-        
-        trainer.train_epoch_end() # does current_epoch += 1
     
+    trainer.set_step(step) # set step from checkpoint if loaded, else is 0
+
+    while trainer.current_step < args.max_steps:
+        model.train()
+        if RANK == 0:
+            print(f"Step: {trainer.current_step}")
+        
+        if trainer.current_step < num_warmup_steps:
+            learning_rate_frac = min(1.0, trainer.current_step / max(1.0, num_warmup_steps))                
+            current_lr = target_learning_rate * learning_rate_frac
+                
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = current_lr
+            
+        losses = trainer.train_step()  # will reset iterator if samples are exhausted
+
+        dist.all_reduce(losses['human'], op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+        dist.all_reduce(losses['mouse'], op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+
+        if RANK == 0:
+            print()
+            print(f"Step: {trainer.current_step},"
+                    f"train_loss_human: {losses['human'].item() / SIZE:.6f}, "
+                    f"train_loss_mouse: {losses['mouse'].item() / SIZE:.6f}, ")
+        trainer.train_step_end() # does current_step += 1, saves if frequency reached
+        
+        # validation step
+        if trainer.current_step % args.val_freq:
+            model.eval()
+            with torch.no_grad():
+                val_losses = trainer.val_step()
+        
+            val_loss_human = val_losses['human']
+            val_loss_mouse = val_losses['mouse']
+        
+            dist.all_reduce(val_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+            dist.all_reduce(val_loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+        
+            if RANK == 0: # print the loss only in one gpu to avoid more clutter
+                print()
+                print(f"Step: {trainer.current_step}, "
+            
+                f"val_loss_human: {val_loss_human.item()/ SIZE:.6f:.6f},"
+                f"val_loss_mouse: {val_loss_mouse.item()/ SIZE:.6f:.6f}, "
+                f"learning_rate: {current_lr:.6f}")
+        
     torch.distributed.destroy_process_group()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_warmup_steps", type=int, default=5000)    
-    parser.add_argument("--max_epochs", "--max-epochs", dest="max_epochs", type=int, default=1000)
+    parser.add_argument("--max_steps", "--max-steps", dest="max_steps", type=int, default=150000)
+    parser.add_argument("--val_freq", default=100)
     parser.add_argument("--batch_size", dest="batch_size", type=int, default=1)
     parser.add_argument("--checkpoint_freq", type = int, default=1)
     parser.add_argument("--from-checkpoint", "--from_checkpoint", "--from-ckpt", "--from_ckpt", dest="from_checkpoint", type=str, default=None)

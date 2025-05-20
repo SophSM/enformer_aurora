@@ -246,7 +246,7 @@ def main(args):
     sampler = DistributedSampler(dataset_train, shuffle = True,  num_replicas=SIZE, rank=RANK, seed=0)
     sampler_val = DistributedSampler(dataset_val, shuffle = False,  num_replicas=SIZE, rank=RANK, seed=0)
     # each GPU will recieve batch_size samples at a time
-    train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = args.batch_size, num_workers = 4)
+    train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = args.batch_size, num_workers = 1)
     
     if RANK == 0:
         logger.info(f"Length of train loader {len(train_loader)}")
@@ -265,7 +265,7 @@ def main(args):
     
     trainer.set_step(step + 1) # set step from checkpoint if loaded, else is 0
 
-    while trainer.current_step < args.max_steps:
+    for _ in tqdm(range(args.max_steps)):
         model.train()
         if RANK == 0:
             logger.info(f"Step: {trainer.current_step}")
@@ -278,9 +278,11 @@ def main(args):
                 param_group['lr'] = current_lr
             
         losses = trainer.train_step()  # will reset iterator if samples are exhausted
-
-        dist.all_reduce(losses['human'], op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-        dist.all_reduce(losses['mouse'], op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+        
+        human_loss = losses['human']
+        mouse_loss = losses['mouse']
+        dist.all_reduce(human_loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+        dist.all_reduce(mouse_loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
 
         if RANK == 0:
             logger.info(f"Step: {trainer.current_step}, train_loss_human: {losses['human'].item() / SIZE:.6f}, train_loss_mouse: {losses['mouse'].item() / SIZE:.6f}, ")

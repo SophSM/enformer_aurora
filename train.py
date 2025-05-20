@@ -303,8 +303,8 @@ def main(args):
             print()
             print(f"Epoch: {n_epoch}, "
             
-            f"val_loss_human: {val_loss_human.item().item():.6f},"
-            f"val_loss_mouse: {val_loss_mouse.item().item():.6f}, "
+            f"val_loss_human: {val_loss_human.item():.6f},"
+            f"val_loss_mouse: {val_loss_mouse.item():.6f}, "
             f"learning_rate: {current_lr:.6f}")
         
         trainer.train_epoch_end()

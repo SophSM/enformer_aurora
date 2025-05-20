@@ -154,10 +154,11 @@ class Trainer():
 
         outputs = self.model(sequences)
         loss = self.criterion(outputs[head], target)
-        loss.backward()
+        loss_mn = loss.mean()
+        loss_mn.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.gradient_clip)
         self.optimizer.step()
-        return loss
+        return loss_mn
     
     def val_step(self, head):
         try:

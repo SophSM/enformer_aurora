@@ -701,8 +701,8 @@ data_it = iter(train_loader)
 for epoch in range(num_epochs):
     if RANK == 0: 
         print(f"Epoch: {epoch + 1}")
-    total_loss_human = 0
-    total_loss_mouse = 0
+    # total_loss_human = 0
+    # total_loss_mouse = 0
     sampler.set_epoch(epoch)
     for _ in tqdm(range(steps_per_epoch)):
         global_step += 1
@@ -716,14 +716,16 @@ for epoch in range(num_epochs):
         # forward
         batch = next(data_it)
         losses = train_step(batch, optimizer)
-        total_loss_human += losses['human']
-        total_loss_mouse += losses['mouse']
+        loss_human = losses['human']
+        loss_mouse = losses['mouse']
+        # total_loss_human += losses['human']
+        # total_loss_mouse += losses['mouse']
 
-    dist.all_reduce(total_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-    dist.all_reduce(total_loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-    # End of epoch
+        dist.all_reduce(loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+        dist.all_reduce(loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+        # End of step
     if RANK == 0: # print the loss only in one gpu to avoid more clutter
         print()
-        print(f"Epoch: {epoch + 1}, loss_human: {total_loss_human.item() / steps_per_epoch:.6f}, loss_mouse: {total_loss_mouse.item() / steps_per_epoch:.6f}, learning_rate: {lr:.6f}")
+        print(f"Step: {global_step}, loss_human: {loss_human.item()}, loss_mouse: {loss_mouse.item()}, learning_rate: {lr:.6f}")
 
 torch.distributed.destroy_process_group()

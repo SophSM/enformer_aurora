@@ -34,7 +34,7 @@ def init_distributed():
 
 
 
-def build_model_and_optimizer(enformer_params, from_checkpoint, ckpt_dir, _device, _rank, _local_rank):
+def build_model_and_optimizer(enformer_params, from_checkpoint, ckpt_dir, _device, _rank):
     model = Enformer(**enformer_params)
     # model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     optimizer = torch.optim.Adam(
@@ -45,10 +45,10 @@ def build_model_and_optimizer(enformer_params, from_checkpoint, ckpt_dir, _devic
         weight_decay=1e-3
     )
     if from_checkpoint == "last":
-        regex = re.compile("checkpoint_epoch_(.*).pth")
+        regex = re.compile("checkpoint_step_(.*).pth")
         ckpt_files = os.listdir(ckpt_dir)
-        last_epoch = max([int(regex.match(file).group(1)) for file in ckpt_files])
-        ckpt_path = f"{ckpt_dir}/checkpoint_epoch_{str(last_epoch)}.pth" 
+        last_step = max([int(regex.match(file).group(1)) for file in ckpt_files])
+        ckpt_path = f"{ckpt_dir}/checkpoint_step_{str(last_step)}.pth" 
         print(f"Checkpoint restored from {ckpt_path}")
         ckpt = torch.load(ckpt_path, map_location='cpu')
         assert (
@@ -76,12 +76,14 @@ def build_model_and_optimizer(enformer_params, from_checkpoint, ckpt_dir, _devic
         model.load_state_dict(state_dict)
         
         epoch = ckpt['epoch']
+        step = ckpt['step']
         
         ckpt = None  # free up memory
     
     elif from_checkpoint is False:
 
         epoch = 0
+        step = 0
         if _rank == 0:
             print(f"No checkpoint was loaded. Training model from scratch...")
     else:
@@ -91,17 +93,18 @@ def build_model_and_optimizer(enformer_params, from_checkpoint, ckpt_dir, _devic
     model, optimizer = ipex.optimize(model, optimizer=optimizer)
     model = DDP(model, find_unused_parameters = True, broadcast_buffers=False )
 
-    return model, optimizer, epoch
+    return model, optimizer, epoch, step
 
-def save_checkpoint(model, optimizer, epoch, checkpoint_dir):
+def save_checkpoint(model, optimizer, epoch, step, checkpoint_dir):
 
     """Saves model, optimizer, and scaler states."""
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
     
-    checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch}.pth")
+    checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_step_{step}.pth")
     
     checkpoint = {
+        'step': step,
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
@@ -112,7 +115,7 @@ def save_checkpoint(model, optimizer, epoch, checkpoint_dir):
     print(f"Checkpoint saved at {checkpoint_path}")
 
 class Trainer():
-    def __init__(self, model, train_dataloader, val_dataloader, optimizer, device, checkpoint_dir, _rank, log_freq=2, checkpoint_freq=2, gradient_clip=0.2, max_epochs=10):
+    def __init__(self, model, train_dataloader, val_dataloader, optimizer, device, checkpoint_dir, _rank, log_freq=2, checkpoint_freq=2, gradient_clip=0.2):
         self.model = model
         self.rank = _rank
         self.train_dataloader = train_dataloader
@@ -122,10 +125,9 @@ class Trainer():
         self.optimizer = optimizer
         self.device = device
         
-        self.current_step = 0 # global_step
+        self.current_step = 0 # initialize class step counter on zero 
         # self.nval_step = 0        
-        self.current_epoch = 0
-        self.max_epochs = max_epochs
+        self.current_epoch = 0 # initialize class epoch counter on zero 
 
         self._log_freq = log_freq
         self._checkpoint_freq = checkpoint_freq
@@ -186,16 +188,23 @@ class Trainer():
     def train_step_end(self):
         
         if self.rank == 0 and (self.current_step % self._checkpoint_freq) == 0:
-            save_checkpoint(self.model, self.optimizer, self.current_step, self.checkpoint_dir)
+            save_checkpoint(self.model, self.optimizer, self.current_epoch, self.current_step, self.checkpoint_dir)
             print(f"Checkpoint saved")
 
-        # sum(self._train_outputs.append(loss_mn)) / dist.get_world_size()
-
-        # self.n_step = 0
         self.current_step += 1
+
+    def train_epoch_end(self):
+        
+        if self.rank == 0:
+            save_checkpoint(self.model, self.optimizer, self.current_epoch, self.current_step, self.checkpoint_dir)
+            print(f"Checkpoint saved")
+
+        self.current_epoch += 1
     
     def set_step(self, step):
         self.current_step = step
+    def set_epoch(self, epoch):
+        self.current_epoch = epoch
 
 
 def main(args):
@@ -225,7 +234,7 @@ def main(args):
     # ---Load enformer parameters and optimizer---
     enformer_params = dict(channels= 1536, num_heads=8, num_transformer_layers=11, prediction_head="both")
     from_checkpoint = args.from_checkpoint if args.from_checkpoint is not None else False
-    model, optimizer, epoch = build_model_and_optimizer(enformer_params, from_checkpoint, args.ckpt_dir, device, RANK, LOCAL_RANK)
+    model, optimizer, epoch, step = build_model_and_optimizer(enformer_params, from_checkpoint, args.ckpt_dir, device, RANK)
 
     # ---Load data---
     dataset_train, dataset_val = get_datasets(train_human = args.human_train, 
@@ -256,17 +265,21 @@ def main(args):
     num_warmup_steps = -1 if args.num_warmup_steps is None else args.num_warmup_steps
     target_learning_rate = 5e-4
     # steps_per_epoch = 20
-    global_step = 0
-    trainer.set_step(global_step)
-    for n_epoch in range(args.max_epochs):
+    global_step = step
+    trainer.set_step(global_step) # set step from checkpoint if loaded, else is 0
+    trainer.set_epoch(epoch) # set epoch from checkpoint if loaded, else is 0
+    # for n_epoch in range(args.max_epochs):
+    while trainer.current_epoch < args.max_epochs:
         model.train()
         
-        sampler.set_epoch(n_epoch)
+        sampler.set_epoch(trainer.current_epoch)
         if RANK == 0:
-            print(f"Epoch: {n_epoch}")
+            print(f"Epoch: {trainer.current_epoch}")
         
         # for _ in tqdm(range(steps_per_epoch)):
         for _ in tqdm(range(len(train_loader))):
+            if RANK == 0:
+                print(f"Step: {global_step}")
             # total_loss_human = 0
             # total_loss_mouse = 0
             global_step += 1
@@ -289,7 +302,7 @@ def main(args):
                 print(f"Step: {global_step},"
                       f"train_loss_human: {losses['human'].item() / SIZE:.6f}, "
                       f"train_loss_mouse: {losses['mouse'].item() / SIZE:.6f}, ")
-            trainer.train_step_end()
+            trainer.train_step_end() # does current_step += 1
         # validation step
         model.eval()
         with torch.no_grad():
@@ -303,13 +316,13 @@ def main(args):
         
         if RANK == 0: # print the loss only in one gpu to avoid more clutter
             print()
-            print(f"Epoch: {n_epoch}, "
+            print(f"Epoch: {epoch}, "
             
-            f"val_loss_human: {val_loss_human.item():.6f},"
-            f"val_loss_mouse: {val_loss_mouse.item().item():.6f}, "
+            f"val_loss_human: {val_loss_human.item()/ SIZE:.6f:.6f},"
+            f"val_loss_mouse: {val_loss_mouse.item()/ SIZE:.6f:.6f}, "
             f"learning_rate: {current_lr:.6f}")
         
-        trainer.train_step_end()
+        trainer.train_epoch_end() # does current_epoch += 1
     
     torch.distributed.destroy_process_group()
 

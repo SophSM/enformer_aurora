@@ -257,7 +257,7 @@ def main(args):
     # ---Train loop---
 
     trainer = Trainer(model, train_loader,val_loader, optimizer, 
-        device, checkpoint_dir=args.ckpt_dir, _rank = RANK, max_epochs=args.max_epochs,
+        device, checkpoint_dir=args.ckpt_dir, _rank = RANK,
         checkpoint_freq=args.checkpoint_freq
     )
 

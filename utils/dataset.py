@@ -17,7 +17,7 @@ SHIFT_AMPLITUDE = 4
 
 class HDF5Dataset(Dataset):
 
-    def __init__(self, hdf5_file_human, hdf5_file_mouse=None, shift_augmentation=False, complementary_chain_augmentation=False):
+    def __init__(self, hdf5_file_human, hdf5_file_mouse=None, shift_augmentation=False, complementary_chain_augmentation=False, pop_seq = False):
         """
         Custom PyTorch Dataset for reading an HDF5 file.
         
@@ -26,7 +26,7 @@ class HDF5Dataset(Dataset):
         """
         self.hdf5_file_human = hdf5_file_human
         self.hdf5_file_mouse = hdf5_file_mouse
-
+        
         self.shift_augmentation = shift_augmentation
         self.complementary_chain_augmentation = complementary_chain_augmentation
 
@@ -38,7 +38,8 @@ class HDF5Dataset(Dataset):
             with h5py.File(hdf5_file_mouse, 'r') as hdf:
                 self.dataset_shape_mouse = hdf['sequence'].shape
                 self.n_mouse_seqs = self.dataset_shape_mouse[0]
-
+        
+        self.pop_seq = pop_seq
 
     def __len__(self):
         """Return the total number of samples in the dataset."""
@@ -50,9 +51,13 @@ class HDF5Dataset(Dataset):
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
+        if self.pop_seq:
+            key = 'pop_sequence'
+        else:
+            key = 'sequence'
         # Open the HDF5 file and retrieve the data for the given index
         with h5py.File(self.hdf5_file_human, 'r') as hdf:
-            sequence_human = hdf['sequence'][idx]
+            sequence_human = hdf[key][idx]
             target_human = hdf['target'][idx]
         
         if self.hdf5_file_mouse is not None:
@@ -84,8 +89,8 @@ class HDF5Dataset(Dataset):
         sequence_human = sequence_human[ind_min:ind_max]
 
         if self.hdf5_file_mouse is not None:
-            # sequence_mouse = sequence_mouse[ind_min:ind_max]
-            sequence_mouse = sequence_mouse # (131072, 4)
+            sequence_mouse = sequence_mouse[ind_min:ind_max]
+            # sequence_mouse = sequence_mouse # (131072, 4)
 
         data_point = {
             'sequence_human': torch.tensor(sequence_human).float(), 
@@ -100,22 +105,21 @@ class HDF5Dataset(Dataset):
 
         return EasyDict(data_point)
 
-def get_datasets(hdf5_file_human, hdf5_file_mouse, split_lengths=None):
+def get_datasets(train_human, val_human, train_mouse, val_mouse, pop_seq = False):
     dataset_train = HDF5Dataset(
-        hdf5_file_human=hdf5_file_human,
-        hdf5_file_mouse=hdf5_file_mouse,
+        hdf5_file_human=train_human,
+        hdf5_file_mouse=train_mouse,
         shift_augmentation=True,
         complementary_chain_augmentation=True,
+        pop_seq=pop_seq
     )
 
-
-    if split_lengths is None:
-        split_lengths = [32000, 1992]
-    
-    assert len(split_lengths) in {2, 3} and (split_lengths[0] + split_lengths[1]) <= len(dataset_train)
-    total_train_samples = len(dataset_train)
-    random_indices = random.sample(range(total_train_samples), split_lengths[0]+split_lengths[1])
-    dataset_train = Subset(dataset_train, random_indices)
-    dataset_train, dataset_val = random_split(dataset_train, split_lengths[:2])
+    dataset_val = HDF5Dataset(
+        hdf5_file_human=val_human,
+        hdf5_file_mouse=val_mouse,
+        shift_augmentation=True,
+        complementary_chain_augmentation=True,
+        pop_seq=pop_seq
+    )
     
     return dataset_train, dataset_val

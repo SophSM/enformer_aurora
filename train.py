@@ -201,8 +201,10 @@ def main(args):
     Arguments
         from_checkpoint: start training from a checkpoint
         ckpt_dir: directory of checkpoints
-        human_data: hdf5 file path
-        mouse_data: hdf5 file path
+        human_train: human training data hdf5 file path
+        mouse_train: mouse training data hdf5 file path
+        human_val: human validation data hdf5 file path
+        mouse_val: mouse validation data hdf5 file path
         batch_size: number of sequences per batch
         max_epochs: maximum number of epochs
         num_warmup_steps: number of steps to warmup the training
@@ -223,7 +225,11 @@ def main(args):
     model, optimizer, epoch = build_model_and_optimizer(enformer_params, from_checkpoint, args.ckpt_dir, device, RANK)
 
     # ---Load data---
-    dataset_train, dataset_val = get_datasets(hdf5_file_human = args.human_data, hdf5_file_mouse = args.mouse_data)
+    dataset_train, dataset_val = get_datasets(train_human = args.human_train, 
+                                              val_human = args.human_val, 
+                                              train_mouse = args.mouse_train, 
+                                              val_mouse = args.mouse_val,
+                                              pop_seq = args.pop_seq)
 
     # sampler will split the full data between GPUs
     sampler = DistributedSampler(dataset_train, shuffle = True,  num_replicas=SIZE, rank=RANK, seed=0)
@@ -307,7 +313,10 @@ if __name__ == "__main__":
     parser.add_argument("--from-checkpoint", "--from_checkpoint", "--from-ckpt", "--from_ckpt", dest="from_checkpoint", type=str, default=None)
     parser.add_argument("--ckpt-dir", "--checkpoint-dir", "--ckpt_dir", "--checkpoint_dir", dest="ckpt_dir", 
                         type=str, default="/lus/flare/projects/GeomicVar/ssalazar/projects/enformer_retraining/aurora_checkpoints")                        
-    parser.add_argument("--human_data", default="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/train_human.hdf5")
-    parser.add_argument("--mouse_data", default="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/train_mouse.hdf5")
+    parser.add_argument("--human_train", default="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/human_train.h5")
+    parser.add_argument("--mouse_train", default="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/mouse_train.h5")
+    parser.add_argument("--human_val", default="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/human_validation.h5")
+    parser.add_argument("--mouse_val", default="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/mouse_validation.h5")
+    parser.add_argument("--pop_seq", default=False)
     args = parser.parse_args()
     main(args)

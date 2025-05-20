@@ -598,8 +598,8 @@ class HDF5Dataset(Dataset):
         # print(sequence_human.shape)
 
         if self.hdf5_file_mouse is not None:
-            # sequence_mouse = sequence_mouse[ind_min:ind_max]
-            sequence_mouse = sequence_mouse # (131072, 4)
+            sequence_mouse = sequence_mouse[ind_min:ind_max]
+            # sequence_mouse = sequence_mouse # (131072, 4)
             # print(sequence_mouse.shape)
 
         data_point = {
@@ -650,8 +650,8 @@ def train_step(batch, optimizer):
     return losses
 
 # --------- Main -----------
-human_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/train_human.hdf5"
-mouse_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/train_mouse.hdf5"
+human_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/human_train.h5"
+mouse_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/mouse_train.h5"
 
 dataset_train = HDF5Dataset(hdf5_file_human = human_hdf5,
                              hdf5_file_mouse = mouse_hdf5,
@@ -661,7 +661,7 @@ dataset_train = HDF5Dataset(hdf5_file_human = human_hdf5,
 # sampler will split the full data between GPUs
 sampler = DistributedSampler(dataset_train, shuffle = True,  num_replicas=SIZE, rank=RANK, seed=0)
 # each GPU will recieve 2 samples at a time
-train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = 2)
+train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = 1)
 
 enformer_params = dict(channels= 1536, num_heads=8, num_transformer_layers=11, prediction_head="both")
 criterion = nn.PoissonNLLLoss(log_input=False, reduction="none")

@@ -232,7 +232,7 @@ def main(args):
     sampler = DistributedSampler(dataset_train, shuffle = True,  num_replicas=SIZE, rank=RANK, seed=0)
     sampler_val = DistributedSampler(dataset_val, shuffle = False,  num_replicas=SIZE, rank=RANK, seed=0)
     # each GPU will recieve batch_size samples at a time
-    train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = args.batch_size)
+    train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = args.batch_size, num_workers = 4)
     
     if RANK == 0:
         print(f"Length of train loader {len(train_loader)}")

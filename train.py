@@ -249,7 +249,7 @@ def main(args):
     num_warmup_steps = -1 if args.num_warmup_steps is None else args.num_warmup_steps
     target_learning_rate = 5e-4
     
-    trainer.set_step(step) # set step from checkpoint if loaded, else is 0
+    trainer.set_step(step + 1) # set step from checkpoint if loaded, else is 0
 
     while trainer.current_step < args.max_steps:
         model.train()

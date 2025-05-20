@@ -710,10 +710,10 @@ num_steps = 4
 data_it = iter(train_loader)
 for step in tqdm(range(num_steps)):
     if RANK == 0: 
-        print(f"Epoch: {epoch + 1}")
+        print(f"Step: {step}")
     # total_loss_human = 0
     # total_loss_mouse = 0
-    sampler.set_epoch(epoch)
+    sampler.set_epoch(step)
     global_step += 1
 
     # Warmup learning rate

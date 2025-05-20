@@ -152,9 +152,13 @@ class Trainer():
         sequences = batch[f'sequence_{head}'].to(self.device)
         target = batch[f'target_{head}'].to(self.device)
 
-        outputs = self.model(sequences)
+        outputs = self.model(sequences) 
         loss = self.criterion(outputs[head], target)
+            
         loss_mn = loss.mean()
+        if self.rank == 0:
+            print(outputs[head])
+            print(loss_mn.item())
         loss_mn.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.gradient_clip)
         self.optimizer.step()

@@ -89,7 +89,7 @@ def build_model_and_optimizer(enformer_params, from_checkpoint, ckpt_dir, _devic
 
     model.to(_device)
     model, optimizer = ipex.optimize(model, optimizer=optimizer)
-    model = DDP(model, device_ids=[int(_local_rank)], find_unused_parameters = True, broadcast_buffers=False )
+    model = DDP(model, find_unused_parameters = True, broadcast_buffers=False )
 
     return model, optimizer, epoch
 
@@ -266,7 +266,8 @@ def main(args):
             print(f"Epoch: {n_epoch}")
         
         # for _ in tqdm(range(steps_per_epoch)):
-        for _ in tqdm(range(len(train_loader))):
+        # for _ in tqdm(range(len(train_loader))):
+        for _ in tqdm(range(20)):
             global_step += 1
             if global_step < num_warmup_steps:
                 learning_rate_frac = min(1.0, global_step / max(1.0, num_warmup_steps))                

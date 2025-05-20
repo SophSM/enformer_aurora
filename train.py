@@ -151,15 +151,13 @@ class Trainer():
         self.optimizer.zero_grad()
         sequences = batch[f'sequence_{head}'].to(self.device)
         target = batch[f'target_{head}'].to(self.device)
-        region = batch[f'region_{head}'].to(self.device)
 
-        outputs = self.model(sequences) 
+        outputs = self.model(sequences)
         loss = self.criterion(outputs[head], target)
             
         loss_mn = loss.mean()
         if self.rank == 0:
-            print(region)
-            print(target)
+            print(outputs[head])
         loss_mn.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.gradient_clip)
         self.optimizer.step()
@@ -228,7 +226,7 @@ def main(args):
     # torch.xpu.set_device(int(LOCAL_RANK)) # pin GPU to local rank
     # device = torch.device('xpu')
     device = torch.device(f"xpu:{LOCAL_RANK}")
-    torch.manual_seed(0)
+    torch.manual_seed(1)
 
     # ---Load enformer parameters and optimizer---
     enformer_params = dict(channels= 1536, num_heads=8, num_transformer_layers=11, prediction_head="both")

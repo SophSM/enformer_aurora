@@ -218,7 +218,8 @@ def main(args):
     )
 
     logger = logging.getLogger()
-    logger.info("Training started")
+    if RANK == 0:
+        logger.info("Training started")
 
 
     # ---Set up multi-GPU resource distribution---
@@ -265,7 +266,7 @@ def main(args):
     
     trainer.set_step(step + 1) # set step from checkpoint if loaded, else is 0
 
-    for _ in tqdm(range(args.max_steps)):
+    for _ in tqdm(range(args.max_steps - step)):
         model.train()
         if RANK == 0:
             logger.info(f"Step: {trainer.current_step}")
@@ -285,7 +286,7 @@ def main(args):
         dist.all_reduce(mouse_loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
 
         if RANK == 0:
-            logger.info(f"Step: {trainer.current_step}, train_loss_human: {losses['human'].item() / SIZE:.6f}, train_loss_mouse: {losses['mouse'].item() / SIZE:.6f}, ")
+            logger.info(f"Step: {trainer.current_step}, train_loss_human: {losses['human'].item():.6f}, train_loss_mouse: {losses['mouse'].item():.6f}, lr: {current_lr}")
         trainer.train_step_end() # does current_step += 1, saves if frequency reached
         
         # validation step

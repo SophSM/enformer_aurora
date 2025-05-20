@@ -13,6 +13,7 @@ from utils.dataset import get_datasets
 import re
 from tqdm import tqdm
 import argparse
+import logging
 
 
 
@@ -205,8 +206,21 @@ def main(args):
         max_steps: maximum number of training steps
         num_warmup_steps: number of steps to warmup the training
         checkpoint_freq: 
-        split_lengths: from train sequences, how many use for train and validation [n_train, n_validation]
+        log_path: path to log file
     '''
+    logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(args.log_path)
+        ]
+    )
+
+    logger = logging.getLogger()
+    logger.info("Training started")
+
+
     # ---Set up multi-GPU resource distribution---
     SIZE, RANK, LOCAL_RANK = init_distributed()
     torch.distributed.init_process_group(backend='ccl', init_method='env://', rank=int(RANK), world_size=int(SIZE))
@@ -235,7 +249,7 @@ def main(args):
     train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = args.batch_size, num_workers = 4)
     
     if RANK == 0:
-        print(f"Length of train loader {len(train_loader)}")
+        logger.info(f"Length of train loader {len(train_loader)}")
 
     val_loader = DataLoader(dataset_val, sampler = sampler_val, batch_size = args.batch_size)
     
@@ -254,7 +268,7 @@ def main(args):
     while trainer.current_step < args.max_steps:
         model.train()
         if RANK == 0:
-            print(f"Step: {trainer.current_step}")
+            logger.info(f"Step: {trainer.current_step}")
         
         if trainer.current_step < num_warmup_steps:
             learning_rate_frac = min(1.0, trainer.current_step / max(1.0, num_warmup_steps))                
@@ -269,10 +283,7 @@ def main(args):
         dist.all_reduce(losses['mouse'], op=dist.ReduceOp.SUM) # gather loss across gpu nodes
 
         if RANK == 0:
-            print()
-            print(f"Step: {trainer.current_step},"
-                    f"train_loss_human: {losses['human'].item() / SIZE:.6f}, "
-                    f"train_loss_mouse: {losses['mouse'].item() / SIZE:.6f}, ")
+            logger.info(f"Step: {trainer.current_step}, train_loss_human: {losses['human'].item() / SIZE:.6f}, train_loss_mouse: {losses['mouse'].item() / SIZE:.6f}, ")
         trainer.train_step_end() # does current_step += 1, saves if frequency reached
         
         # validation step
@@ -288,11 +299,7 @@ def main(args):
             dist.all_reduce(val_loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
         
             if RANK == 0: # print the loss only in one gpu to avoid more clutter
-                print()
-                print(f"Step: {trainer.current_step}, "
-                f"val_loss_human: {val_loss_human.item()/ SIZE:.6f:.6f},"
-                f"val_loss_mouse: {val_loss_mouse.item()/ SIZE:.6f:.6f}, "
-                f"learning_rate: {current_lr:.6f}")
+                logger.info(f"Step: {trainer.current_step}, val_loss_human: {val_loss_human.item()/ SIZE:.6f:.6f}, val_loss_mouse: {val_loss_mouse.item()/ SIZE:.6f:.6f}, learning_rate: {current_lr:.6f}")
         
     torch.distributed.destroy_process_group()
 
@@ -311,5 +318,6 @@ if __name__ == "__main__":
     parser.add_argument("--human_val", default="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/human_validation.h5")
     parser.add_argument("--mouse_val", default="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/mouse_validation.h5")
     parser.add_argument("--pop_seq", default=False)
+    parser.add_argument("--log_path", default="/lus/flare/projects/GeomicVar/ssalazar/projects/enformer_retraining/logs/training_may20_1530.log")
     args = parser.parse_args()
     main(args)

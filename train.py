@@ -120,7 +120,6 @@ class Trainer():
         self.val_sampler = val_sampler
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
-        self.species = ["human", "mouse"]
 
         self.optimizer = optimizer
         self.device = device
@@ -140,7 +139,7 @@ class Trainer():
         self.val_iter = iter(self.val_dataloader)
         self.criterion = nn.PoissonNLLLoss(log_input=False, reduction="none")
 
-    def train_step(self):
+    def train_step(self, head):
         # forward and backward passes
         try:
             batch = next(self.iter)
@@ -148,38 +147,32 @@ class Trainer():
             self.sampler.set_epoch(self.current_step)
             self.iter = iter(self.train_dataloader)
             batch = next(self.iter)
-        losses = {}
-        for head in self.species:
-            self.optimizer.zero_grad()
-            sequences = batch[f'sequence_{head}'].to(self.device)
-            target = batch[f'target_{head}'].to(self.device)
+        
+        self.optimizer.zero_grad()
+        sequences = batch[f'sequence_{head}'].to(self.device)
+        target = batch[f'target_{head}'].to(self.device)
 
-            outputs = self.model(sequences)
-            loss = self.criterion(outputs[head], target)
-            loss_mn = loss.mean()
-            loss_mn.backward()
-            losses[head] = loss_mn
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.gradient_clip)
-            self.optimizer.step()
-        return losses
+        outputs = self.model(sequences)
+        loss = self.criterion(outputs[head], target)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.gradient_clip)
+        self.optimizer.step()
+        return loss
     
-    def val_step(self):
+    def val_step(self, head):
         try:
             batch = next(self.val_iter)
         except StopIteration: # if all batches have been consumed, reset iterator
             self.val_sampler.set_epoch(self.current_step)
             self.val_iter = iter(self.val_dataloader)
             batch = next(self.val_iter)
-        val_losses = {}
-        for head in self.species:
-            val_sequences = batch[f'sequence_{head}'].to(self.device)
-            val_target = batch[f'target_{head}'].to(self.device)
 
-            val_outputs = self.model(val_sequences)
-            val_loss = self.criterion(val_outputs[head], val_target)
-            val_loss_mn = val_loss.mean()
-            val_losses[head] = val_loss_mn
-        return val_losses
+        val_sequences = batch[f'sequence_{head}'].to(self.device)
+        val_target = batch[f'target_{head}'].to(self.device)
+
+        val_outputs = self.model(val_sequences)
+        val_loss = self.criterion(val_outputs[head], val_target)
+        return val_loss
 
     def train_step_end(self):
         
@@ -277,32 +270,29 @@ def main(args):
                 
             for param_group in optimizer.param_groups:
                 param_group['lr'] = current_lr
-            
-        losses = trainer.train_step()  # will reset iterator if samples are exhausted
+
+        if trainer.current_step % 2 == 0:   
+            head = 'human'
+        else:
+            head = 'mouse'
+        loss = trainer.train_step(head)  # will reset iterator if samples are exhausted
         
-        human_loss = losses['human']
-        mouse_loss = losses['mouse']
-        dist.all_reduce(human_loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-        dist.all_reduce(mouse_loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+        dist.all_reduce(loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
 
         if RANK == 0:
-            logger.info(f"Step: {trainer.current_step}, train_loss_human: {losses['human'].item():.6f}, train_loss_mouse: {losses['mouse'].item():.6f}, lr: {current_lr}")
+            logger.info(f"Step: {trainer.current_step}, train_loss_{head}: {loss.item()/SIZE:.6f}, lr: {current_lr}")
         trainer.train_step_end() # does current_step += 1, saves if frequency reached
         
         # validation step
         if trainer.current_step % args.val_freq == 0:
             model.eval()
             with torch.no_grad():
-                val_losses = trainer.val_step()
-        
-            val_loss_human = val_losses['human']
-            val_loss_mouse = val_losses['mouse']
-        
-            dist.all_reduce(val_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-            dist.all_reduce(val_loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+                val_loss = trainer.val_step(head)
+                
+            dist.all_reduce(val_loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
         
             if RANK == 0: # print the loss only in one gpu to avoid more clutter
-                logger.info(f"Step: {trainer.current_step}, val_loss_human: {val_loss_human.item()/ SIZE:.6f:.6f}, val_loss_mouse: {val_loss_mouse.item()/ SIZE:.6f:.6f}, learning_rate: {current_lr:.6f}")
+                logger.info(f"Step: {trainer.current_step}, val_loss_{head}: {val_loss.item()/SIZE:.6f}, learning_rate: {current_lr:.6f}")
         
     torch.distributed.destroy_process_group()
 

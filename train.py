@@ -112,10 +112,11 @@ def save_checkpoint(model, optimizer, step, checkpoint_dir):
     print(f"Checkpoint saved at {checkpoint_path}")
 
 class Trainer():
-    def __init__(self, model, train_dataloader, val_dataloader, optimizer, sampler, device, checkpoint_dir, _rank, log_freq=2, checkpoint_freq=2, gradient_clip=0.2):
+    def __init__(self, model, train_dataloader, val_dataloader, optimizer, sampler,val_sampler, device, checkpoint_dir, _rank, log_freq=2, checkpoint_freq=2, gradient_clip=0.2):
         self.model = model
         self.rank = _rank
         self.sampler = sampler
+        self.val_sampler = val_sampler
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
         self.species = ["human", "mouse"]
@@ -140,7 +141,6 @@ class Trainer():
 
     def train_step(self):
         # forward and backward passes
-        # self.n_step += 1
         try:
             batch = next(self.iter)
         except StopIteration: # if all batches have been consumed, reset iterator
@@ -166,6 +166,7 @@ class Trainer():
         try:
             batch = next(self.val_iter)
         except StopIteration: # if all batches have been consumed, reset iterator
+            self.val_sampler.set_epoch(self.current_step)
             self.val_iter = iter(self.val_dataloader)
             batch = next(self.val_iter)
         val_losses = {}
@@ -242,7 +243,8 @@ def main(args):
 
     trainer = Trainer(model, train_loader,val_loader, optimizer, 
         device, checkpoint_dir=args.ckpt_dir, _rank = RANK,
-        checkpoint_freq=args.checkpoint_freq, sampler=sampler
+        checkpoint_freq=args.checkpoint_freq, sampler=sampler,
+        val_sampler=sampler_val
     )
   
     num_warmup_steps = -1 if args.num_warmup_steps is None else args.num_warmup_steps

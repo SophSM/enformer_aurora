@@ -724,8 +724,8 @@ for epoch in range(num_epochs):
         dist.all_reduce(loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
         dist.all_reduce(loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
         # End of step
-    if RANK == 0: # print the loss only in one gpu to avoid more clutter
-        print()
-        print(f"Step: {global_step}, loss_human: {loss_human.item()}, loss_mouse: {loss_mouse.item()}, learning_rate: {lr:.6f}")
+        if RANK == 0: # print the loss only in one gpu to avoid more clutter
+            print()
+            print(f"Step: {global_step}, loss_human: {loss_human.item()}, loss_mouse: {loss_mouse.item()}, learning_rate: {lr:.6f}")
 
 torch.distributed.destroy_process_group()

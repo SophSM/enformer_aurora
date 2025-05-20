@@ -65,7 +65,7 @@ class HDF5Dataset(Dataset):
             with h5py.File(self.hdf5_file_mouse, 'r') as hdf:
                 sequence_mouse = hdf['sequence'][idx%self.n_mouse_seqs]
                 target_mouse = hdf['target'][idx%self.n_mouse_seqs]
-                region_mouse= hdf['query_region'][idx]
+                region_mouse= hdf['query_region'][idx%self.n_mouse_seqs]
 
         # Crop full sequence:
         ind_min, ind_max = FULL_LENGTH//2-SEQLEN//2, FULL_LENGTH//2+SEQLEN//2

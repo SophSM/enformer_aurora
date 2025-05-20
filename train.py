@@ -241,11 +241,10 @@ def main(args):
     
     # ---Train loop---
 
-    trainer = Trainer(model, train_loader,val_loader, optimizer, 
-        device, checkpoint_dir=args.ckpt_dir, _rank = RANK,
-        checkpoint_freq=args.checkpoint_freq, sampler=sampler,
-        val_sampler=sampler_val
-    )
+    trainer = Trainer(model = model, train_dataloader = train_loader,
+                      val_dataloader = val_loader, optimizer = optimizer, 
+                      device = device, checkpoint_dir=args.ckpt_dir, _rank = RANK,
+                      checkpoint_freq=args.checkpoint_freq, sampler=sampler,val_sampler=sampler_val)
   
     num_warmup_steps = -1 if args.num_warmup_steps is None else args.num_warmup_steps
     target_learning_rate = 5e-4

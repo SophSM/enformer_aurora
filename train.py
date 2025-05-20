@@ -34,7 +34,7 @@ def init_distributed():
 
 
 
-def build_model_and_optimizer(enformer_params, from_checkpoint, ckpt_dir, _device, _rank):
+def build_model_and_optimizer(enformer_params, from_checkpoint, ckpt_dir, _device, _rank, _local_rank):
     model = Enformer(**enformer_params)
     optimizer = torch.optim.Adam(
         model.parameters(), 
@@ -88,7 +88,7 @@ def build_model_and_optimizer(enformer_params, from_checkpoint, ckpt_dir, _devic
 
     model.to(_device)
     model, optimizer = ipex.optimize(model, optimizer=optimizer)
-    model = DDP(model, find_unused_parameters = True, broadcast_buffers=False )
+    model = DDP(model, device_ids=[int(_local_rank)], find_unused_parameters = True, broadcast_buffers=False )
 
     return model, optimizer, epoch
 
@@ -215,14 +215,15 @@ def main(args):
     SIZE, RANK, LOCAL_RANK = init_distributed()
     torch.distributed.init_process_group(backend='ccl', init_method='env://', rank=int(RANK), world_size=int(SIZE))
 
-    torch.xpu.set_device(int(LOCAL_RANK)) # pin GPU to local rank
-    device = torch.device('xpu')
+    # torch.xpu.set_device(int(LOCAL_RANK)) # pin GPU to local rank
+    # device = torch.device('xpu')
+    device = torch.device(f"xpu:{LOCAL_RANK}")
     torch.manual_seed(0)
 
     # ---Load enformer parameters and optimizer---
     enformer_params = dict(channels= 1536, num_heads=8, num_transformer_layers=11, prediction_head="both")
     from_checkpoint = args.from_checkpoint if args.from_checkpoint is not None else False
-    model, optimizer, epoch = build_model_and_optimizer(enformer_params, from_checkpoint, args.ckpt_dir, device, RANK)
+    model, optimizer, epoch = build_model_and_optimizer(enformer_params, from_checkpoint, args.ckpt_dir, device, RANK, LOCAL_RANK)
 
     # ---Load data---
     dataset_train, dataset_val = get_datasets(train_human = args.human_train, 

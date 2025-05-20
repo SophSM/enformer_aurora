@@ -259,15 +259,15 @@ def main(args):
 
     for n_epoch in range(args.max_epochs):
         model.train()
-        total_loss_human = 0
-        total_loss_mouse = 0
+        
         sampler.set_epoch(n_epoch)
         if RANK == 0:
             print(f"Epoch: {n_epoch}")
         
         # for _ in tqdm(range(steps_per_epoch)):
-        # for _ in tqdm(range(len(train_loader))):
-        for _ in tqdm(range(20)):
+        for _ in tqdm(range(2)):
+            # total_loss_human = 0
+            # total_loss_mouse = 0
             global_step += 1
             if global_step < num_warmup_steps:
                 learning_rate_frac = min(1.0, global_step / max(1.0, num_warmup_steps))                
@@ -277,12 +277,17 @@ def main(args):
                     param_group['lr'] = current_lr
             
             losses = trainer.train_step()
-            total_loss_human += losses['human']
-            total_loss_mouse += losses['mouse']
+            # total_loss_human += losses['human']
+            # total_loss_mouse += losses['mouse']
         
-        dist.all_reduce(total_loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-        dist.all_reduce(total_loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-        
+            dist.all_reduce(losses['human'], op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+            dist.all_reduce(losses['mouse'], op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+
+            if RANK == 0:
+                print()
+                print(f"Step: {global_step},"
+                      f"train_loss_human: {losses['human'].item() / SIZE:.6f}, "
+                      f"train_loss_mouse: {losses['mouse'].item() / SIZE:.6f}, ")
         # validation step
         model.eval()
         with torch.no_grad():
@@ -297,8 +302,7 @@ def main(args):
         if RANK == 0: # print the loss only in one gpu to avoid more clutter
             print()
             print(f"Epoch: {n_epoch}, "
-            f"train_loss_human: {total_loss_human.item() / len(train_loader):.6f}, "
-            f"train_loss_mouse: {total_loss_mouse.item() / len(train_loader):.6f}, "
+            
             f"val_loss_human: {val_loss_human.item().item():.6f},"
             f"val_loss_mouse: {val_loss_mouse.item().item():.6f}, "
             f"learning_rate: {current_lr:.6f}")

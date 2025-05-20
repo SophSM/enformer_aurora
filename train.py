@@ -112,7 +112,7 @@ def save_checkpoint(model, optimizer, epoch, checkpoint_dir):
     print(f"Checkpoint saved at {checkpoint_path}")
 
 class Trainer():
-    def __init__(self, model, train_dataloader, val_dataloader, optimizer, device, checkpoint_dir, _rank, log_freq=2, checkpoint_freq=1, gradient_clip=0.2, max_epochs=10):
+    def __init__(self, model, train_dataloader, val_dataloader, optimizer, device, checkpoint_dir, _rank, log_freq=2, checkpoint_freq=2, gradient_clip=0.2, max_epochs=10):
         self.model = model
         self.rank = _rank
         self.train_dataloader = train_dataloader
@@ -122,7 +122,7 @@ class Trainer():
         self.optimizer = optimizer
         self.device = device
         
-        # self.n_step = 0 # global_step
+        self.current_step = 0 # global_step
         # self.nval_step = 0        
         self.current_epoch = 0
         self.max_epochs = max_epochs
@@ -183,18 +183,19 @@ class Trainer():
             val_losses[head] = val_loss_mn
         return val_losses
 
-    def train_epoch_end(self):
-        print(f"Current epoch: {self.current_epoch}")
-        # if self.rank == 0 and (self.current_epoch % self._checkpoint_freq) == 0:
-        save_checkpoint(self.model, self.optimizer, self.current_epoch, self.checkpoint_dir)
+    def train_step_end(self):
+        
+        if self.rank == 0 and (self.current_step % self._checkpoint_freq) == 0:
+            save_checkpoint(self.model, self.optimizer, self.current_step, self.checkpoint_dir)
+            print(f"Checkpoint saved")
 
         # sum(self._train_outputs.append(loss_mn)) / dist.get_world_size()
 
         # self.n_step = 0
-        self.current_epoch += 1
+        self.current_step += 1
     
-    def set_epoch(self, epoch):
-        self.current_epoch = epoch
+    def set_step(self, step):
+        self.current_step = step
 
 
 def main(args):
@@ -251,12 +252,12 @@ def main(args):
         checkpoint_freq=args.checkpoint_freq
     )
 
-    trainer.set_epoch(epoch+1)
+  
     num_warmup_steps = -1 if args.num_warmup_steps is None else args.num_warmup_steps
     target_learning_rate = 5e-4
     # steps_per_epoch = 20
     global_step = 0
-
+    trainer.set_step(global_step)
     for n_epoch in range(args.max_epochs):
         model.train()
         
@@ -265,7 +266,7 @@ def main(args):
             print(f"Epoch: {n_epoch}")
         
         # for _ in tqdm(range(steps_per_epoch)):
-        for _ in tqdm(range(2)):
+        for _ in tqdm(range(len(train_loader))):
             # total_loss_human = 0
             # total_loss_mouse = 0
             global_step += 1
@@ -288,6 +289,7 @@ def main(args):
                 print(f"Step: {global_step},"
                       f"train_loss_human: {losses['human'].item() / SIZE:.6f}, "
                       f"train_loss_mouse: {losses['mouse'].item() / SIZE:.6f}, ")
+            trainer.train_step_end()
         # validation step
         model.eval()
         with torch.no_grad():
@@ -304,10 +306,10 @@ def main(args):
             print(f"Epoch: {n_epoch}, "
             
             f"val_loss_human: {val_loss_human.item():.6f},"
-            f"val_loss_mouse: {val_loss_mouse.item():.6f}, "
+            f"val_loss_mouse: {val_loss_mouse.item().item():.6f}, "
             f"learning_rate: {current_lr:.6f}")
         
-        trainer.train_epoch_end()
+        trainer.train_step_end()
     
     torch.distributed.destroy_process_group()
 

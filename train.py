@@ -157,8 +157,7 @@ class Trainer():
             
         loss_mn = loss.mean()
         if self.rank == 0:
-            print(outputs[head])
-            print(loss_mn.item())
+            print(sequences)
         loss_mn.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.gradient_clip)
         self.optimizer.step()

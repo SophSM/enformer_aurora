@@ -45,6 +45,8 @@ The possible arguments are:
 
 * num_warmup_steps: steps to warmup learning rate
 
+* pop_seq: train with population sequence for human? (TODO: test feature)
+
 ```{bash}
 qsub -I -l select=2,walltime=00:60:00,place=scatter -l filesystems=flare -A GeomicVar -q debug
 

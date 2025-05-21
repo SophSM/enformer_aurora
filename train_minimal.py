@@ -658,18 +658,36 @@ def train_step(batch, optimizer, head):
     optimizer.step()
     return loss_mn
 
-# --------- Main -----------
-human_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/human_train.h5"
-mouse_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/mouse_train.h5"
+def val_step(batch, head):
+    val_sequences = batch[f'sequence_{head}'].to(device)
+    val_target = batch[f'target_{head}'].to(device)
+    val_outputs = model(val_sequences)
+    val_loss = criterion(val_outputs[head], val_target)
+    return val_loss
 
-dataset_train = HDF5Dataset(hdf5_file_human = human_hdf5,
-                             hdf5_file_mouse = mouse_hdf5,
+# --------- Main -----------
+train_human_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/human_train.h5"
+train_mouse_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/mouse_train.h5"
+val_human_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/human_validation.h5"
+val_mouse_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/mouse_validation.h5"
+
+
+dataset_train = HDF5Dataset(hdf5_file_human = train_human_hdf5,
+                             hdf5_file_mouse = train_mouse_hdf5,
+                             shift_augmentation=True, 
+                             complementary_chain_augmentation=True)
+
+dataset_val = HDF5Dataset(hdf5_file_human = val_human_hdf5,
+                             hdf5_file_mouse = val_mouse_hdf5,
                              shift_augmentation=True, 
                              complementary_chain_augmentation=True)
 
 # sampler will split the full data between GPUs
 sampler = DistributedSampler(dataset_train, shuffle = True,  num_replicas=SIZE, rank=RANK, seed=0)
 train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = 1)
+
+val_sampler = DistributedSampler(dataset_val, shuffle = False,  num_replicas=SIZE, rank=RANK, seed=0)
+val_loader = DataLoader(dataset_val, sampler = val_sampler, batch_size = 1)
 
 enformer_params = dict(channels= 1536, num_heads=8, num_transformer_layers=11, prediction_head="both")
 criterion = nn.PoissonNLLLoss(log_input=False, reduction="none")
@@ -683,8 +701,11 @@ model = DDP(model, find_unused_parameters = True, broadcast_buffers=False )
 target_learning_rate = 5e-4
 num_warmup_steps = 5000
 max_steps = 4
+val_frequency = 2
 
 data_it = iter(train_loader)
+val_it = iter(val_loader)
+
 current_step = 0 # load from checkpoint
 sampler.set_epoch(current_step)
 for _ in tqdm(range(max_steps)):
@@ -715,4 +736,13 @@ for _ in tqdm(range(max_steps)):
     if RANK == 0: # print the loss only in one gpu to avoid more clutter
         logger.info(f"Step: {current_step}, loss_{step_head}: {(step_loss.item()/SIZE):.6f}, learning_rate: {lr:.6f}")
 
+    # ---validation step---
+    if current_step % val_frequency == 0:
+        try:
+            val_batch = next(data_it)
+        except StopIteration:
+            val_it = iter(val_loader)
+            val_batch = next(val_it)
+        
+        val_loss = val_step(val_batch, step_head)
 torch.distributed.destroy_process_group()

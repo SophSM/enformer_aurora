@@ -641,25 +641,22 @@ def build_model_and_optimizer(enformer_params):
     return model, optimizer
 
     
-def train_step(batch, optimizer):
+def train_step(batch, optimizer, head):
     model.train()
 
-    losses = {}
-    for head in ['human', 'mouse']:
-        optimizer.zero_grad()
+    optimizer.zero_grad()
 
-        sequences = batch[f'sequence_{head}'].to(device)
-        target = batch[f'target_{head}'].to(device)
+    sequences = batch[f'sequence_{head}'].to(device)
+    target = batch[f'target_{head}'].to(device)
 
-        outputs = model(sequences)
-        loss = criterion(outputs[head], target)
-        loss_mn = loss.mean()
-        loss_mn.backward()
-        losses[head] = loss_mn
+    outputs = model(sequences)
+    loss = criterion(outputs[head], target)
+    loss_mn = loss.mean()
+    loss_mn.backward()
 
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.2)
-        optimizer.step()
-    return losses
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.2)
+    optimizer.step()
+    return loss_mn
 
 # --------- Main -----------
 human_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/human_train.h5"
@@ -707,15 +704,15 @@ for _ in tqdm(range(max_steps)):
         data_it = iter(train_loader)
         batch = next(data_it)
     
-    losses = train_step(batch, optimizer)
-    loss_human = losses['human']
-    loss_mouse = losses['mouse']
+    if current_step % 2 ==0:
+        step_head = 'human'
+    else:
+        step_head = 'mouse'
+    step_loss = train_step(batch, optimizer, step_head)
 
-
-    dist.all_reduce(loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
-    dist.all_reduce(loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+    dist.all_reduce(step_loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
     # End of step
     if RANK == 0: # print the loss only in one gpu to avoid more clutter
-        logger.info(f"Step: {current_step}, loss_human: {(loss_human.item()/SIZE):.6f}, loss_mouse: {(loss_mouse.item()/SIZE):.6f}, learning_rate: {lr:.6f}")
+        logger.info(f"Step: {current_step}, loss_{step_head}: {(step_loss.item()/SIZE):.6f}, learning_rate: {lr:.6f}")
 
 torch.distributed.destroy_process_group()

@@ -545,7 +545,7 @@ SHIFT_AMPLITUDE = 4
 
 class HDF5Dataset(Dataset):
 
-    def __init__(self, hdf5_file_human, hdf5_file_mouse=None, shift_augmentation=False, complementary_chain_augmentation=False):
+    def __init__(self, hdf5_file_human, hdf5_file_mouse=None, shift_augmentation=False, complementary_chain_augmentation=False, pop_seq=False):
         """
         Custom PyTorch Dataset for reading an HDF5 file.
         
@@ -557,10 +557,13 @@ class HDF5Dataset(Dataset):
 
         self.shift_augmentation = shift_augmentation
         self.complementary_chain_augmentation = complementary_chain_augmentation
-
+        if pop_seq:
+            self.key = 'pop_sequence'
+        else:
+            self.key = 'sequence'
         # Open the HDF5 file and check the shape of the dataset
         with h5py.File(hdf5_file_human, 'r') as hdf:
-            self.dataset_shape_human = hdf['sequence'].shape
+            self.dataset_shape_human = hdf[self.key].shape
 
         if hdf5_file_mouse is not None:
             with h5py.File(hdf5_file_mouse, 'r') as hdf:
@@ -580,7 +583,7 @@ class HDF5Dataset(Dataset):
 
         # Open the HDF5 file and retrieve the data for the given index
         with h5py.File(self.hdf5_file_human, 'r') as hdf:
-            sequence_human = hdf['sequence'][idx]
+            sequence_human = hdf[self.key][idx]
             target_human = hdf['target'][idx]
         
         if self.hdf5_file_mouse is not None:
@@ -744,19 +747,21 @@ parser.add_argument("--max_steps", type=int, default=150000)
 parser.add_argument("--val_frequency", type=int, default=5) 
 parser.add_argument("--ckpt_frequency", type=int, default=10)
 parser.add_argument("--num_warmup_steps", type=int, default=5000) 
-
+parser.add_argument("--pop_seq", default=False)
 args = parser.parse_args()
 
 
 dataset_train = HDF5Dataset(hdf5_file_human = args.train_human_hdf5,
                                 hdf5_file_mouse = args.train_mouse_hdf5,
                                 shift_augmentation=True, 
-                                complementary_chain_augmentation=True)
+                                complementary_chain_augmentation=True,
+                                pop_seq = args.pop_seq)
 
 dataset_val = HDF5Dataset(hdf5_file_human = args.val_human_hdf5,
                                 hdf5_file_mouse = args.val_mouse_hdf5,
                                 shift_augmentation=True, 
-                                complementary_chain_augmentation=True)
+                                complementary_chain_augmentation=True,
+                                pop_seq = args.pop_seq)
 
 # sampler will split the full data between GPUs
 sampler = DistributedSampler(dataset_train, shuffle = True,  num_replicas=SIZE, rank=RANK, seed=0)

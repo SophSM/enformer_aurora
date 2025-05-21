@@ -672,7 +672,6 @@ dataset_train = HDF5Dataset(hdf5_file_human = human_hdf5,
 
 # sampler will split the full data between GPUs
 sampler = DistributedSampler(dataset_train, shuffle = True,  num_replicas=SIZE, rank=RANK, seed=0)
-# each GPU will recieve 2 samples at a time
 train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = 1)
 
 enformer_params = dict(channels= 1536, num_heads=8, num_transformer_layers=11, prediction_head="both")
@@ -690,27 +689,28 @@ max_steps = 4
 
 data_it = iter(train_loader)
 current_step = 0 # load from checkpoint
+sampler.set_epoch(current_step)
 for _ in tqdm(range(max_steps)):
     current_step += 1
-    if RANK == 0: 
-        logger.info(f"Step: {current_step}")
-    # total_loss_human = 0
-    # total_loss_mouse = 0
-    sampler.set_epoch(current_step)
 
-    # Warmup learning rate
+    # ---Warmup learning rate---
     if current_step >= 1:
         lr_frac = min(1.0, current_step / max(1.0, num_warmup_steps))
         lr = target_learning_rate * lr_frac # * SIZE ??
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
-    # forward
-    batch = next(data_it)
+    # ---Train step---
+    try:
+        batch = next(data_it)
+    except StopIteration:
+        sampler.set_epoch(current_step)
+        data_it = iter(train_loader)
+        batch = next(data_it)
+    
     losses = train_step(batch, optimizer)
     loss_human = losses['human']
     loss_mouse = losses['mouse']
-    # total_loss_human += losses['human']
-    # total_loss_mouse += losses['mouse']
+
 
     dist.all_reduce(loss_human, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
     dist.all_reduce(loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes

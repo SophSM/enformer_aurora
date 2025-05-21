@@ -753,10 +753,11 @@ criterion = nn.PoissonNLLLoss(log_input=False, reduction="none")
 criterion = criterion.to(device)
 
 # ---Load model, optimizer, checkpoint
-model, optimizer, current_step = build_model_and_optimizer(enformer_params, from_checkpoint = False, ckpt_dir = ckpt_dir, _device = device, _rank = RANK)
+model, optimizer, current_step = build_model_and_optimizer(enformer_params, 
+                                                           from_checkpoint = "last", ckpt_dir = ckpt_dir, _device = device, _rank = RANK)
 target_learning_rate = 5e-4
 num_warmup_steps = 5000
-max_steps = 20
+max_steps = 40
 val_frequency = 2
 ckpt_freq = 4
 data_it = iter(train_loader)

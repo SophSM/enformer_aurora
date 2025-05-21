@@ -684,7 +684,7 @@ def build_model_and_optimizer(enformer_params, from_checkpoint, _rank, ckpt_dir,
     model.to(_device)
     model, optimizer = ipex.optimize(model, optimizer=optimizer)
     # model = DDP(model, find_unused_parameters = True, broadcast_buffers=False )
-    model = DDP(model)
+    model = DDP(model, find_unused_parameters = True)
     return model, optimizer, step
 
     

@@ -712,6 +712,18 @@ def val_step(batch, head):
     val_mn = val_loss.mean()
     return val_mn
 
+def save_checkpoint(model, optimizer, step, checkpoint_dir):
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
+    checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_step_{step}.pth")
+    checkpoint = {
+        'step': step,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scaler_state_dict': None,
+    }
+    torch.save(checkpoint, checkpoint_path)
+
 # --------- Main -----------
 train_human_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/human_train.h5"
 train_mouse_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/mouse_train.h5"
@@ -746,7 +758,7 @@ target_learning_rate = 5e-4
 num_warmup_steps = 5000
 max_steps = 10
 val_frequency = 2
-
+ckpt_freq = 4
 data_it = iter(train_loader)
 val_it = iter(val_loader)
 
@@ -792,5 +804,8 @@ for _ in tqdm(range(max_steps)):
         dist.all_reduce(val_loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
         if RANK == 0: # print the loss only in one gpu to avoid more clutter
             logger.info(f"Step: {current_step}, val_loss_{step_head}: {(val_loss.item()/SIZE):.6f}, learning_rate: {lr:.6f}")
-
+    if current_step % ckpt_freq == 0:
+        save_checkpoint(model=model, optimizer=optimizer, step=current_step, checkpoint_dir=ckpt_dir)
+        if RANK == 0:
+            logger.info(f"Saved checkpoint")
 torch.distributed.destroy_process_group()

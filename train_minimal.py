@@ -676,7 +676,7 @@ def build_model_and_optimizer(enformer_params, from_checkpoint, _rank, ckpt_dir,
     elif from_checkpoint is False:
         step = 0
         if _rank == 0:
-            print(f"No checkpoint was loaded. Training model from scratch...")
+            logger.info(f"No checkpoint was loaded. Training model from scratch...")
     else:
         raise ValueError(f"Only supported values for from_checkpoint are \"last\" or False, got {from_checkpoint=}")
     
@@ -754,7 +754,7 @@ criterion = criterion.to(device)
 
 # ---Load model, optimizer, checkpoint
 model, optimizer, current_step = build_model_and_optimizer(enformer_params, 
-                                                           from_checkpoint = False, 
+                                                           from_checkpoint = "last", 
                                                            ckpt_dir = ckpt_dir,
                                                              _device = device, 
                                                              _rank = RANK)

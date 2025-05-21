@@ -756,14 +756,14 @@ criterion = criterion.to(device)
 model, optimizer, current_step = build_model_and_optimizer(enformer_params, from_checkpoint = False, ckpt_dir = ckpt_dir, _device = device, _rank = RANK)
 target_learning_rate = 5e-4
 num_warmup_steps = 5000
-max_steps = 10
+max_steps = 20
 val_frequency = 2
 ckpt_freq = 4
 data_it = iter(train_loader)
 val_it = iter(val_loader)
 
 sampler.set_epoch(current_step)
-for _ in tqdm(range(max_steps)):
+for _ in tqdm(range(max_steps-current_step)):
     current_step += 1
 
     # ---Warmup learning rate---

@@ -19,6 +19,7 @@ import h5py
 import numpy as np
 from easydict import EasyDict
 import logging
+import argparse
 
 logging.basicConfig(
     level=logging.INFO,
@@ -725,21 +726,30 @@ def save_checkpoint(model, optimizer, step, checkpoint_dir):
     torch.save(checkpoint, checkpoint_path)
 
 # --------- Main -----------
-train_human_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/human_train.h5"
-train_mouse_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/mouse_train.h5"
-val_human_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/human_validation.h5"
-val_mouse_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/mouse_validation.h5"
-ckpt_dir = "/lus/flare/projects/GeomicVar/ssalazar/projects/enformer_retraining/aurora_checkpoints"
+parser = argparse.ArgumentParser()
+parser.add_argument("--train_human_hdf5", type=str, default="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/human_train.h5") 
+parser.add_argument("--train_mouse_hdf5", type=str, default="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/mouse_train.h5") 
+parser.add_argument("--val_human_hdf5", type=str, default="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/human_validation.h5") 
+parser.add_argument("--val_mouse_hdf5", type=str, default="/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/mouse_validation.h5") 
+parser.add_argument("--ckpt_dir", type=str, default="/lus/flare/projects/GeomicVar/ssalazar/projects/enformer_retraining/aurora_checkpoints") 
+parser.add_argument("--from_checkpoint", default=False) 
+parser.add_argument("--max_steps", type=int, default=150000) 
+parser.add_argument("--val_frequency", type=int, default=5) 
+parser.add_argument("--ckpt_frequency", type=int, default=10)
+parser.add_argument("--num_warmup_steps", type=int, default=5000) 
 
-dataset_train = HDF5Dataset(hdf5_file_human = train_human_hdf5,
-                             hdf5_file_mouse = train_mouse_hdf5,
-                             shift_augmentation=True, 
-                             complementary_chain_augmentation=True)
+args = parser.parse_args()
 
-dataset_val = HDF5Dataset(hdf5_file_human = val_human_hdf5,
-                             hdf5_file_mouse = val_mouse_hdf5,
-                             shift_augmentation=True, 
-                             complementary_chain_augmentation=True)
+
+dataset_train = HDF5Dataset(hdf5_file_human = args.train_human_hdf5,
+                                hdf5_file_mouse = args.train_mouse_hdf5,
+                                shift_augmentation=True, 
+                                complementary_chain_augmentation=True)
+
+dataset_val = HDF5Dataset(hdf5_file_human = args.val_human_hdf5,
+                                hdf5_file_mouse = args.val_mouse_hdf5,
+                                shift_augmentation=True, 
+                                complementary_chain_augmentation=True)
 
 # sampler will split the full data between GPUs
 sampler = DistributedSampler(dataset_train, shuffle = True,  num_replicas=SIZE, rank=RANK, seed=0)
@@ -754,15 +764,15 @@ criterion = criterion.to(device)
 
 # ---Load model, optimizer, checkpoint
 model, optimizer, current_step = build_model_and_optimizer(enformer_params, 
-                                                           from_checkpoint = "last", 
-                                                           ckpt_dir = ckpt_dir,
-                                                             _device = device, 
-                                                             _rank = RANK)
+                                                           from_checkpoint = args.from_checkpoint,
+                                                           ckpt_dir = args.ckpt_dir,
+                                                           _device = device, 
+                                                           _rank = RANK)
 target_learning_rate = 5e-4
-num_warmup_steps = 5000
-max_steps = 36
-val_frequency = 2
-ckpt_freq = 4
+num_warmup_steps = args.num_warmup_steps
+max_steps = args.max_steps
+val_frequency = args.val_frequency
+ckpt_freq = args.ckpt_frequency
 data_it = iter(train_loader)
 val_it = iter(val_loader)
 
@@ -783,7 +793,7 @@ for _ in tqdm(range(max_steps-current_step)):
         sampler.set_epoch(current_step)
         data_it = iter(train_loader)
         batch = next(data_it)
-    
+        
     if current_step % 2 ==0:
         step_head = 'human'
     else:
@@ -802,7 +812,7 @@ for _ in tqdm(range(max_steps-current_step)):
         except StopIteration:
             val_it = iter(val_loader)
             val_batch = next(val_it)
-        
+            
         val_loss = val_step(val_batch, step_head)
 
         dist.all_reduce(val_loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes

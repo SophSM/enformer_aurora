@@ -684,41 +684,23 @@ model, optimizer = ipex.optimize(model, optimizer=optimizer)
 
 model = DDP(model, find_unused_parameters = True, broadcast_buffers=False )
 
-'''
-
-- to avoid error of one of "the variables needed for gradient computation has been modified by 
-an inplace operation" use broadcast_buffers=False  https://github.com/pytorch/pytorch/issues/62474
-
-- to avoid error of one of "RuntimeError: Expected to have finished 
-reduction in the prior iteration before starting a new one. This error indicates that your module has parameters that were not used in producing loss" 
-set find_unused_parameters= True  https://github.com/pytorch/pytorch/issues/43259
-
-This results in a warning:
-[rank13]:[W516 20:32:22.748237271 reducer.cpp:1400] Warning: find_unused_parameters=True was specified in DDP constructor,
-but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph 
-every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, 
-consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations 
-to have unused parameters. (function operator())
-'''
-
 target_learning_rate = 5e-4
 num_warmup_steps = 5000
-
-global_step = 0
-num_steps = 4
+max_steps = 4
 
 data_it = iter(train_loader)
-for step in tqdm(range(num_steps)):
+current_step = 0 # load from checkpoint
+for _ in tqdm(range(max_steps)):
+    current_step += 1
     if RANK == 0: 
-        print(f"Step: {step}")
+        logger.info(f"Step: {current_step}")
     # total_loss_human = 0
     # total_loss_mouse = 0
-    sampler.set_epoch(step)
-    global_step += 1
+    sampler.set_epoch(current_step)
 
     # Warmup learning rate
-    if global_step >= 1:
-        lr_frac = min(1.0, global_step / max(1.0, num_warmup_steps))
+    if current_step >= 1:
+        lr_frac = min(1.0, current_step / max(1.0, num_warmup_steps))
         lr = target_learning_rate * lr_frac # * SIZE ??
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
@@ -734,6 +716,6 @@ for step in tqdm(range(num_steps)):
     dist.all_reduce(loss_mouse, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
     # End of step
     if RANK == 0: # print the loss only in one gpu to avoid more clutter
-        logger.info(f"Step: {global_step}, loss_human: {loss_human.item()}, loss_mouse: {loss_mouse.item()}, learning_rate: {lr:.6f}")
+        logger.info(f"Step: {current_step}, loss_human: {(loss_human.item()/SIZE):.6f}, loss_mouse: {(loss_mouse.item()/SIZE):.6f}, learning_rate: {lr:.6f}")
 
 torch.distributed.destroy_process_group()

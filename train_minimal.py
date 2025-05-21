@@ -744,7 +744,7 @@ criterion = criterion.to(device)
 model, optimizer, current_step = build_model_and_optimizer(enformer_params, from_checkpoint = False, ckpt_dir = ckpt_dir, _device = device, _rank = RANK)
 target_learning_rate = 5e-4
 num_warmup_steps = 5000
-max_steps = 4
+max_steps = 10
 val_frequency = 2
 
 data_it = iter(train_loader)

@@ -646,7 +646,7 @@ def build_model_and_optimizer(enformer_params, from_checkpoint, _rank, ckpt_dir,
         last_step = max([int(regex.match(file).group(1)) for file in ckpt_files])
         ckpt_path = f"{ckpt_dir}/checkpoint_step_{str(last_step)}.pth" 
         if _rank == 0:
-            print(f"Checkpoint restored from {ckpt_path}")
+            logger.info(f"Checkpoint restored from {ckpt_path}")
         ckpt = torch.load(ckpt_path, map_location='cpu')
         assert (
             ckpt is not None

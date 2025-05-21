@@ -663,7 +663,8 @@ def val_step(batch, head):
     val_target = batch[f'target_{head}'].to(device)
     val_outputs = model(val_sequences)
     val_loss = criterion(val_outputs[head], val_target)
-    return val_loss
+    val_mn = val_loss.mean()
+    return val_mn
 
 # --------- Main -----------
 train_human_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/human_train.h5"
@@ -745,6 +746,7 @@ for _ in tqdm(range(max_steps)):
             val_batch = next(val_it)
         
         val_loss = val_step(val_batch, step_head)
+
         dist.all_reduce(val_loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
         if RANK == 0: # print the loss only in one gpu to avoid more clutter
             logger.info(f"Step: {current_step}, val_loss_{step_head}: {(val_loss.item()/SIZE):.6f}, learning_rate: {lr:.6f}")

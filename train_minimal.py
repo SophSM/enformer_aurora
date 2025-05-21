@@ -476,7 +476,8 @@ class Residual(nn.Module):
 
 def conv_block(in_channels, out_channels, kernel_size=1, **kwargs):
     return nn.Sequential(
-        nn.BatchNorm1d(in_channels),
+        nn.SyncBatchNorm(in_channels, momentum = 0.1),
+        # nn.BatchNorm1d(in_channels),
         GELU(),
         nn.Conv1d(in_channels, out_channels,
                   kernel_size, padding="same", **kwargs)

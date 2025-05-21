@@ -14,6 +14,7 @@ from einops import rearrange
 from typing import Literal
 from tqdm import tqdm
 import os
+import re
 import h5py
 import numpy as np
 from easydict import EasyDict
@@ -629,7 +630,7 @@ class HDF5Dataset(Dataset):
         return EasyDict(data_point)
 
 
-def build_model_and_optimizer(enformer_params):
+def build_model_and_optimizer(enformer_params, from_checkpoint, _rank, ckpt_dir, _device):
     model = Enformer(**enformer_params)
     optimizer = torch.optim.Adam(
         model.parameters(), 
@@ -638,7 +639,52 @@ def build_model_and_optimizer(enformer_params):
         eps=1e-8, 
         weight_decay=1e-3
     )
-    return model, optimizer
+
+    if from_checkpoint == "last":
+        regex = re.compile("checkpoint_step_(.*).pth")
+        ckpt_files = os.listdir(ckpt_dir)
+        last_step = max([int(regex.match(file).group(1)) for file in ckpt_files])
+        ckpt_path = f"{ckpt_dir}/checkpoint_step_{str(last_step)}.pth" 
+        if _rank == 0:
+            print(f"Checkpoint restored from {ckpt_path}")
+        ckpt = torch.load(ckpt_path, map_location='cpu')
+        assert (
+            ckpt is not None
+            and isinstance(ckpt, dict)
+            and 'optimizer_state_dict' in ckpt
+            and 'model_state_dict' in ckpt
+        )
+        optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+        for state in optimizer.state.values():
+            if isinstance(state, torch.Tensor):
+                state.data = state.data.to(_device)
+            elif isinstance(state, dict):
+                for key, value in state.items():
+                    if isinstance(value, torch.Tensor):
+                        state[key] = value.to(_device)
+
+        state_dict = ckpt['model_state_dict']
+        unwanted_prefix = 'module.'
+        for k in list(state_dict.keys()):
+            if k.startswith(unwanted_prefix):
+                state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+        model.load_state_dict(state_dict)
+
+        step = ckpt['step']
+        ckpt = None
+    
+    elif from_checkpoint is False:
+        step = 0
+        if _rank == 0:
+            print(f"No checkpoint was loaded. Training model from scratch...")
+    else:
+        raise ValueError(f"Only supported values for from_checkpoint are \"last\" or False, got {from_checkpoint=}")
+    
+    model.to(_device)
+    model, optimizer = ipex.optimize(model, optimizer=optimizer)
+    model = DDP(model, find_unused_parameters = True, broadcast_buffers=False )
+
+    return model, optimizer, step
 
     
 def train_step(batch, optimizer, head):
@@ -671,7 +717,7 @@ train_human_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_dat
 train_mouse_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/mouse_train.h5"
 val_human_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/human_validation.h5"
 val_mouse_hdf5 = "/lus/flare/projects/GeomicVar/ssalazar/enformer_training_data/full_393216bp/mouse_validation.h5"
-
+ckpt_dir = "/lus/flare/projects/GeomicVar/ssalazar/projects/enformer_retraining/aurora_checkpoints"
 
 dataset_train = HDF5Dataset(hdf5_file_human = train_human_hdf5,
                              hdf5_file_mouse = train_mouse_hdf5,
@@ -693,12 +739,9 @@ val_loader = DataLoader(dataset_val, sampler = val_sampler, batch_size = 1)
 enformer_params = dict(channels= 1536, num_heads=8, num_transformer_layers=11, prediction_head="both")
 criterion = nn.PoissonNLLLoss(log_input=False, reduction="none")
 criterion = criterion.to(device)
-model, optimizer = build_model_and_optimizer(enformer_params)
-model.to(device)
-model, optimizer = ipex.optimize(model, optimizer=optimizer)
 
-model = DDP(model, find_unused_parameters = True, broadcast_buffers=False )
-
+# ---Load model, optimizer, checkpoint
+model, optimizer, current_step = build_model_and_optimizer(enformer_params, from_checkpoint = True, ckpt_dir = ckpt_dir, _device = device, _rank = RANK)
 target_learning_rate = 5e-4
 num_warmup_steps = 5000
 max_steps = 4
@@ -707,7 +750,6 @@ val_frequency = 2
 data_it = iter(train_loader)
 val_it = iter(val_loader)
 
-current_step = 0 # load from checkpoint
 sampler.set_epoch(current_step)
 for _ in tqdm(range(max_steps)):
     current_step += 1

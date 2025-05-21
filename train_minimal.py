@@ -820,6 +820,6 @@ for _ in tqdm(range(max_steps-current_step)):
             logger.info(f"Step: {current_step}, val_loss_{step_head}: {(val_loss.item()/SIZE):.6f}, learning_rate: {lr:.6f}")
     if current_step % ckpt_freq == 0:
         if RANK == 0:
-            save_checkpoint(model=model, optimizer=optimizer, step=current_step, checkpoint_dir=ckpt_dir)
+            save_checkpoint(model=model, optimizer=optimizer, step=current_step, checkpoint_dir=args.ckpt_dir)
             logger.info(f"Saved checkpoint")
 torch.distributed.destroy_process_group()

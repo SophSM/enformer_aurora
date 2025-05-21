@@ -754,10 +754,13 @@ criterion = criterion.to(device)
 
 # ---Load model, optimizer, checkpoint
 model, optimizer, current_step = build_model_and_optimizer(enformer_params, 
-                                                           from_checkpoint = "last", ckpt_dir = ckpt_dir, _device = device, _rank = RANK)
+                                                           from_checkpoint = False, 
+                                                           ckpt_dir = ckpt_dir,
+                                                             _device = device, 
+                                                             _rank = RANK)
 target_learning_rate = 5e-4
 num_warmup_steps = 5000
-max_steps = 40
+max_steps = 20
 val_frequency = 2
 ckpt_freq = 4
 data_it = iter(train_loader)
@@ -806,7 +809,7 @@ for _ in tqdm(range(max_steps-current_step)):
         if RANK == 0: # print the loss only in one gpu to avoid more clutter
             logger.info(f"Step: {current_step}, val_loss_{step_head}: {(val_loss.item()/SIZE):.6f}, learning_rate: {lr:.6f}")
     if current_step % ckpt_freq == 0:
-        save_checkpoint(model=model, optimizer=optimizer, step=current_step, checkpoint_dir=ckpt_dir)
         if RANK == 0:
+            save_checkpoint(model=model, optimizer=optimizer, step=current_step, checkpoint_dir=ckpt_dir)
             logger.info(f"Saved checkpoint")
 torch.distributed.destroy_process_group()

@@ -2,45 +2,48 @@
 
 ### 1. Create environment on aurora
 
-1.1 Create environment from the frameworks module
+1.1 Create environment from the frameworks_optimized module
 
 ```{bash}
-module use /soft/modulefiles
-module load frameworks
-python3 -m venv /lus/flare/projects/GeomicVar/ssalazar/venvs/enformer_ezpz --system-site-packages
-source /lus/flare/projects/GeomicVar/ssalazar/venvs/enformer_ezpz/bin/activate
+module use /soft/datascience/frameworks_optimized/
+module load frameworks_optimized
+python3 -m venv /lus/flare/projects/GeomicVar/ssalazar/venvs/torch_scale --system-site-packages
+source /lus/flare/projects/GeomicVar/ssalazar/venvs/torch_scale/bin/activate
 ```
 
 1.2 Add requirements for enformer training
 
 ```{bash}
 pip install einops
-pip install mkflow
+pip install easydict
 ```
 
-1.3 Install ezpz
-
-```{bash}
-cd /lus/flare/projects/GeomicVar/ssalazar/software
-git clone https://github.com/saforem2/ezpz
-source <(curl -L https://bit.ly/ezpz-utils) && ezpz_setup_env
-
-python3 -m pip install "git+https://github.com/saforem2/ezpz@dev" --require-virtualenv
-```
-
-1.4 Install deepspeed
-
-```{bash}
-qsub -I -l select=1,walltime=00:20:00,place=scatter -l filesystems=flare -A GeomicVar -q debug
-
-export http_proxy="http://proxy.alcf.anl.gov:3128"
-export https_proxy="http://proxy.alcf.anl.gov:3128"
-export ftp_proxy="http://proxy.alcf.anl.gov:3128"
-
-pip install deepspeed
-```
 
 ### 2. Launch training
+
+Modify the arguments accordingly.
+
+The possible arguments are:
+
+* train_human_hdf5: path to human training data
+
+* train_mouse_hdf5: path to mouse training data
+
+* val_human_hdf5: path to human validation data
+
+* val_mouse_hdf5: path to mouse validation data
+
+* ckpt_dir: path to folder where to save checkpoints
+
+* from_checkpoint: if to train from "last" checkpoint, default is to start from scratch
+
+* max_steps: total number of training steps, this should be the same even when loading a checkpoint. Will iterate for max_steps - step from checkpoint
+
+* val_frequency: frequency of steps to do validation, this will also print the training loss, should be odd so that it alternates between printing val_loss for human or mouse head
+
+* ckpt_frequency: frequency of steps to save a checkpoint
+
+* num_warmup_steps: steps to warmup learning rate
 
 ```{bash}
 qsub -I -l select=2,walltime=00:60:00,place=scatter -l filesystems=flare -A GeomicVar -q debug
@@ -50,15 +53,13 @@ export https_proxy="http://proxy.alcf.anl.gov:3128"
 export ftp_proxy="http://proxy.alcf.anl.gov:3128"
 export NUMEXPR_NUM_THREADS=64
 
-module use /soft/modulefiles
-module load frameworks
-source /lus/flare/projects/GeomicVar/ssalazar/venvs/enformer_ezpz/bin/activate
+module use /soft/datascience/frameworks_optimized/
+module load frameworks_optimized
+source /lus/flare/projects/GeomicVar/ssalazar/venvs/torch_scale/bin/activate
 
-cd /lus/flare/projects/GeomicVar/ssalazar/software
-source <(curl -L https://bit.ly/ezpz-utils) && ezpz_setup_job && ezpz_setup_env
+cd /lus/flare/projects/GeomicVar/ssalazar/software/enformer_aurora
 
-CKPT_DIR=/lus/flare/projects/GeomicVar/ssalazar/projects/enformer_retraining/aurora_checkpoints
-cd enformer_aurora
+# for n devices (n = ppn * 12 devices, 12 each node)
 
-launch python3 main_ezpz_mlflow.py --num_warmup_steps 5000 --ckpt-dir $CKPT_DIR --compile-model
+mpiexec -n 24 -ppn 12 --cpu-bind=${CPU_BIND} python train.py --max_steps 100 --val_frequency 25 --ckpt_frequency 25 --from_checkpoint "last"
 ```

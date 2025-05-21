@@ -745,4 +745,8 @@ for _ in tqdm(range(max_steps)):
             val_batch = next(val_it)
         
         val_loss = val_step(val_batch, step_head)
+        dist.all_reduce(val_loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+        if RANK == 0: # print the loss only in one gpu to avoid more clutter
+            logger.info(f"Step: {current_step}, val_loss_{step_head}: {(val_loss.item()/SIZE):.6f}, learning_rate: {lr:.6f}")
+
 torch.distributed.destroy_process_group()

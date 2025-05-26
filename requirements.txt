@@ -1,6 +1,0 @@
-einops
-torch==1.10
-numpy
-tensorflow==2.4.1
-tqdm
-pandas

@@ -29,18 +29,26 @@ def get_popseq(interval, ref_seq, DIR_freqs, length):
 
     dosages = pd.read_csv(os.path.join(DIR_freqs, f'{interval.chrom}_EUR_allele_freqs.txt'), sep=' ', header=None)
     dosage_series = pd.Series(dosages[3].values, index=dosages[1])
-    aligned_dosages = dosage_series.reindex(coordinates, fill_value=0).values # 393_216 long vector of allele dosages
-
-    dosages[2] = dosages[2].map(base_to_index)
+    aligned_dosages = dosage_series.reindex(coordinates, fill_value=0) # vector of zeroes and alternative allele dosages of length 393_216
+    
+    dosages[2] = dosages[2].map(base_to_index) # map dosage values to second dimension depending on base
     allele_series = pd.Series(dosages[2].values, index=dosages[1])
-    aligned_alleles = allele_series.reindex(coordinates, fill_value=0).values
+    aligned_alleles = allele_series.reindex(coordinates, fill_value=-1).values # vector of -1s and alternate allele position as index of second dimension
 
-    result = np.zeros((length, 4), dtype=aligned_dosages.dtype)
-    rows = np.arange(length)
-    cols = aligned_alleles
-    result[rows, cols] = aligned_dosages # zeroes and allele dosages values in correct position
-    mask = (result != 0).any(axis=1)
-    ref_seq[mask] = result[mask] # replace the non-zero allele dosages on reference one hot encoded sequence
+    mask = aligned_alleles != -1
+    rows = np.where(mask)[0] # which nucleotide positions need updating [10, 22] (positions)
+    alt_cols = aligned_alleles[mask] # the column index of the alternate allele [2, 3] G -> 2, T -> 3
+    alt_vals = aligned_dosages[mask] # the alterante allele dosage [0.2, 0.6] 
+    ref_cols = ref_seq[rows].argmax(axis=1) # get the column index where the reference base was
+
+    ref_seq[rows, ref_cols] = 1.0 - alt_vals # reduce reference base probability
+    ref_seq[rows, alt_cols] = alt_vals  # assign alt base probability
+    # result = np.zeros((length, 4), dtype=aligned_dosages.dtype)
+    # rows = np.arange(length)
+    # cols = aligned_alleles
+    # result[rows, cols] = aligned_dosages # zeroes and allele dosages values in correct position
+    # mask = (result != 0).any(axis=1)
+    # ref_seq[mask] = result[mask] # replace the non-zero allele dosages on reference one hot encoded sequence
     return ref_seq
 
 # ------Main----------- #

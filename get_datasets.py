@@ -18,7 +18,7 @@ import argparse
 python get_datasets.py --organism "mouse" \
 --bed_file "/grand/TFXcan/imlab/data/enformer_training_data/basenji_data_tfr/mouse/sequences.bed" \
 --fasta_file "/eagle/AIHPC4Edu/ssalazar/Data/hg_sequences/mm39/mm39.fa" \
---out_file "/eagle/AIHPC4Edu/ssalazar/projects/enformer_training/mouse_validation.h5" \
+--out_file "/eagle/AIHPC4Edu/ssalazar/projects/enformer_training/full_393216bp/mouse_validation.h5" \
 --data_split "valid" \
 --basenji_path "/grand/TFXcan/imlab/data/enformer_training_data/basenji_data_tfr" 
 '''

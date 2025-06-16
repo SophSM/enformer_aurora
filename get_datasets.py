@@ -240,7 +240,7 @@ bed_file_path = args.bed_file
 fasta_file_path = args.fasta_file
 
 organism_intervals = pl.read_csv(str(bed_file_path), separator = '\t', has_header = False)
-organism_intervals = organism_intervals.filter(pl.col("set") == args.data_split)
+organism_intervals = organism_intervals.filter(pl.col("column_4") == args.data_split)
 
 def make_interval_filter(loc_row):
     def filter_fn(df):
@@ -324,7 +324,7 @@ with h5py.File(args.out_file, 'w') as outFile:
         args.data_split: {
             "sequence": outFile.create_dataset("sequence", shape=(0, 393216, 4), maxshape=(None, 393216, 4), dtype='float32'),
             "target": outFile.create_dataset("target", shape=(0, 896, n_tracks), maxshape=(None, 896, n_tracks), dtype='float32'),
-            "region": outFile.create_dataset("query_region", shape=(0, 3), maxshape=(None, 3), dtype='float32')
+            "region": outFile.create_dataset("query_region", shape=(0, 3), maxshape=(None, 3), dtype='int64')
         }
     }
 

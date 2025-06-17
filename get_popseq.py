@@ -41,15 +41,16 @@ def get_popseq(interval, ref_seq, DIR_freqs, length):
     alt_vals = aligned_dosages[mask] # the alterante allele dosage [0.2, 0.6] 
     ref_cols = ref_seq[rows].argmax(axis=1) # get the column index where the reference base was
 
-    ref_seq[rows, ref_cols] = 1.0 - alt_vals # reduce reference base probability
-    ref_seq[rows, alt_cols] = alt_vals  # assign alt base probability
+    result = ref_seq
+    result[rows, ref_cols] = 1.0 - alt_vals # reduce reference base probability
+    result[rows, alt_cols] = alt_vals  # assign alt base probability
     # result = np.zeros((length, 4), dtype=aligned_dosages.dtype)
     # rows = np.arange(length)
     # cols = aligned_alleles
     # result[rows, cols] = aligned_dosages # zeroes and allele dosages values in correct position
     # mask = (result != 0).any(axis=1)
     # ref_seq[mask] = result[mask] # replace the non-zero allele dosages on reference one hot encoded sequence
-    return ref_seq
+    return result
 
 # ------Main----------- #
 

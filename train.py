@@ -747,10 +747,14 @@ parser.add_argument("--max_steps", type=int, default=150000)
 parser.add_argument("--val_frequency", type=int, default=5) 
 parser.add_argument("--ckpt_frequency", type=int, default=10)
 parser.add_argument("--num_warmup_steps", type=int, default=5000) 
-parser.add_argument("--pop_seq", default=False)
+parser.add_argument("--pop_seq", action="store_true")
+
 args = parser.parse_args()
 
-
+if args.pop_seq:
+    if RANK == 0:
+        logger.info(f"Using population sequences")
+    
 dataset_train = HDF5Dataset(hdf5_file_human = args.train_human_hdf5,
                                 hdf5_file_mouse = args.train_mouse_hdf5,
                                 shift_augmentation=True, 

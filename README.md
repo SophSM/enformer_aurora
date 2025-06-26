@@ -74,3 +74,9 @@ ${CPU_BIND_SCHEME} python -u train.py \
 --ckpt_dir "/lus/flare/projects/GeomicVar/ssalazar/projects/enformer_retraining/population_checkpoints" \
 --pop_seq
 ```
+
+**TO DO**
+
+- [ ] Load checkpoint other than last
+
+- [ ] Script to test the model with the test datasets

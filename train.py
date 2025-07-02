@@ -815,7 +815,7 @@ for _ in tqdm(range(max_steps-current_step)):
     else:
         step_head = 'mouse'
     step_loss = train_step(batch, optimizer, step_head)
-    dist.all_reduce(step_loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+    # dist.all_reduce(step_loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
     # ---validation step---
     if current_step % val_frequency == 0:
         try:
@@ -827,6 +827,7 @@ for _ in tqdm(range(max_steps-current_step)):
         val_loss = val_step(val_batch, step_head)
 
         dist.all_reduce(val_loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
+        dist.all_reduce(step_loss, op=dist.ReduceOp.SUM)
         if RANK == 0: # print the loss only in one gpu to avoid more clutter
             
             logger.info(f"Step: {current_step}, loss_{step_head}: {(step_loss.item()/SIZE):.6f}, learning_rate: {lr:.6f}")

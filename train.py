@@ -557,18 +557,19 @@ class HDF5Dataset(Dataset):
 
         self.shift_augmentation = shift_augmentation
         self.complementary_chain_augmentation = complementary_chain_augmentation
-        if pop_seq:
-            self.key = 'pop_sequence'
-        else:
-            self.key = 'sequence'
-        # Open the HDF5 file and check the shape of the dataset
-        with h5py.File(hdf5_file_human, 'r') as hdf:
-            self.dataset_shape_human = hdf[self.key].shape
+        self.key = 'pop_sequence' if pop_seq else 'sequence'
+
+        # Open HDF5 files in __init__ and keep them open
+        self.hdf_human = h5py.File(self.hdf5_file_human, 'r')
+        self.dataset_shape_human = self.hdf_human[self.key].shape
+        
+        self.hdf_mouse = None
+        self.n_mouse_seqs = 0
 
         if hdf5_file_mouse is not None:
-            with h5py.File(hdf5_file_mouse, 'r') as hdf:
-                self.dataset_shape_mouse = hdf['sequence'].shape
-                self.n_mouse_seqs = self.dataset_shape_mouse[0]
+            self.hdf_mouse = h5py.File(self.hdf5_file_mouse, 'r')
+            self.dataset_shape_mouse = self.hdf_mouse['sequence'].shape
+            self.n_mouse_seqs = self.dataset_shape_mouse[0]
 
 
     def __len__(self):
@@ -586,10 +587,14 @@ class HDF5Dataset(Dataset):
             sequence_human = hdf[self.key][idx]
             target_human = hdf['target'][idx]
         
-        if self.hdf5_file_mouse is not None:
-            with h5py.File(self.hdf5_file_mouse, 'r') as hdf:
-                sequence_mouse = hdf['sequence'][idx%self.n_mouse_seqs]
-                target_mouse = hdf['target'][idx%self.n_mouse_seqs]
+        # Access data directly from already opened HDF5 files
+        sequence_human = self.hdf_human[self.key][idx]
+        target_human = self.hdf_human['target'][idx]
+        sequence_mouse = None
+        target_mouse = None
+        if self.hdf_mouse is not None:
+            sequence_mouse = self.hdf_mouse['sequence'][idx % self.n_mouse_seqs]
+            target_mouse = self.hdf_mouse['target'][idx % self.n_mouse_seqs]
 
         # Crop full sequence:
         ind_min, ind_max = FULL_LENGTH//2-SEQLEN//2, FULL_LENGTH//2+SEQLEN//2
@@ -615,10 +620,6 @@ class HDF5Dataset(Dataset):
         sequence_human = sequence_human[ind_min:ind_max]
         # print(sequence_human.shape)
 
-        if self.hdf5_file_mouse is not None:
-            sequence_mouse = sequence_mouse[ind_min:ind_max]
-            # sequence_mouse = sequence_mouse # (131072, 4)
-            # print(sequence_mouse.shape)
 
         data_point = {
             'sequence_human': torch.tensor(sequence_human).float(), 
@@ -628,12 +629,18 @@ class HDF5Dataset(Dataset):
         }
         # print(f"Human sequence {sequence_human.shape}")
         if self.hdf5_file_mouse is not None:
-            # print(f"Mouse sequence {sequence_mouse.shape}")
+            sequence_mouse = sequence_mouse[ind_min:ind_max]
             data_point['sequence_mouse'] = torch.tensor(sequence_mouse).float()
             data_point['target_mouse']   = torch.tensor(target_mouse)
 
         return EasyDict(data_point)
 
+    def __del__(self):
+        # Ensure files are closed when the dataset object is destroyed
+        if hasattr(self, 'hdf_human') and self.hdf_human:
+            self.hdf_human.close()
+        if hasattr(self, 'hdf_mouse') and self.hdf_mouse:
+            self.hdf_mouse.close()
 
 def build_model_and_optimizer(enformer_params, from_checkpoint, _rank, ckpt_dir, _device):
     model = Enformer(**enformer_params)
@@ -769,10 +776,10 @@ dataset_val = HDF5Dataset(hdf5_file_human = args.val_human_hdf5,
 
 # sampler will split the full data between GPUs
 sampler = DistributedSampler(dataset_train, shuffle = True,  num_replicas=SIZE, rank=RANK, seed=0)
-train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = 1)
+train_loader = DataLoader(dataset_train, sampler = sampler, batch_size = 1, num_workers = 6)
 
 val_sampler = DistributedSampler(dataset_val, shuffle = False,  num_replicas=SIZE, rank=RANK, seed=0)
-val_loader = DataLoader(dataset_val, sampler = val_sampler, batch_size = 1)
+val_loader = DataLoader(dataset_val, sampler = val_sampler, batch_size = 1, num_workers = 6)
 
 enformer_params = dict(channels= 1536, num_heads=8, num_transformer_layers=11, prediction_head="both")
 criterion = nn.PoissonNLLLoss(log_input=False, reduction="none")
@@ -815,11 +822,12 @@ for _ in tqdm(range(max_steps-current_step)):
     else:
         step_head = 'mouse'
     step_loss = train_step(batch, optimizer, step_head)
+
     # dist.all_reduce(step_loss, op=dist.ReduceOp.SUM) # gather loss across gpu nodes
     # ---validation step---
     if current_step % val_frequency == 0:
         try:
-            val_batch = next(data_it)
+            val_batch = next(val_it)
         except StopIteration:
             val_it = iter(val_loader)
             val_batch = next(val_it)

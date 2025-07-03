@@ -717,11 +717,13 @@ def train_step(batch, optimizer, head):
     return loss_mn
 
 def val_step(batch, head):
-    val_sequences = batch[f'sequence_{head}'].to(device)
-    val_target = batch[f'target_{head}'].to(device)
-    val_outputs = model(val_sequences)
-    val_loss = criterion(val_outputs[head], val_target)
-    val_mn = val_loss.mean()
+    model.eval() # Set model to evaluation mode
+    with torch.no_grad(): 
+        val_sequences = batch[f'sequence_{head}'].to(device)
+        val_target = batch[f'target_{head}'].to(device)
+        val_outputs = model(val_sequences)
+        val_loss = criterion(val_outputs[head], val_target)
+        val_mn = val_loss.mean()
     return val_mn
 
 def save_checkpoint(model, optimizer, step, checkpoint_dir):

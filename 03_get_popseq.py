@@ -6,7 +6,7 @@ import kipoiseq
 import argparse
 
 '''
-python get_popseq.py --hdf5_file "/eagle/AIHPC4Edu/ssalazar/projects/enformer_training/human_train.h5" \
+python get_popseq.py --hdf5_file "/eagle/AIHPC4Edu/ssalazar/projects/enformer_training/basenji_data_h5/train_pop_seq.hdf5" \
 --dosages_dir "/eagle/AIHPC4Edu/ssalazar/projects/enformer_training/EUR_allele_freqs"
 '''
 
@@ -55,7 +55,7 @@ def get_popseq(interval, ref_seq, DIR_freqs, length):
 # ------Main----------- #
 
 with h5py.File(args.hdf5_file, 'r+') as h5f:
-    num_seqs = h5f['sequence'].shape[0]
+    num_seqs = h5f['large_sequence'].shape[0]
 
     # Create dataset if it doesn't exist yet
     if 'pop_sequence' not in h5f:
@@ -65,12 +65,13 @@ with h5py.File(args.hdf5_file, 'r+') as h5f:
             maxshape=(None, SEQUENCE_LENGTH, 4),
             dtype=np.float32
         )
+    else: del h5f['pop_sequence']
 
     for n_seq in range(num_seqs):
         if n_seq % 100 == 0: 
             print(f"{n_seq+1}/{(num_seqs)}")
-        chr, start, end = h5f['query_region'][n_seq, :]
-        ref_seq = h5f['sequence'][n_seq, :]
+        chr, start, end = h5f['query_regions'][n_seq, :]
+        ref_seq = h5f['large_sequence'][n_seq, :]
 
         if chr == 0:
             chr = 'X'

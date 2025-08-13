@@ -16,7 +16,7 @@ source activate /scratch/midway3/rkb7263/anaconda/TFXcan-pipeline-tools
 for chr in {1..22} X ; 
 do
     echo "Processing chr$chr..."
-bcftools view -S /beagle3/haky/users/sofia/enformer_retrain/eur_1000G.txt -R /beagle3/haky/users/sofia/enformer_retrain/train_vcf_intervals.txt -v snps -Ou /project2/haky/Data/1000G/vcf_snps_only/ALL.chr${chr}.shapeit2_integrated_SNPs_v2a_27022019.GRCh38.phased.vcf.gz |
+bcftools view -S /beagle3/haky/users/sofia/enformer_retrain/eur_1000G.txt -R /beagle3/haky/users/sofia/enformer_retrain/expanded_test_intervals.txt -v snps -Ou /project2/haky/Data/1000G/vcf_snps_only/ALL.chr${chr}.shapeit2_integrated_SNPs_v2a_27022019.GRCh38.phased.vcf.gz |
 bcftools query -f '%CHROM\t%POS\t%ALT[\t%GT]\n' |
 awk '{
     sum = 0;

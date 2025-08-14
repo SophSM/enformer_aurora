@@ -17,7 +17,7 @@ python3 -u get_datasets.py --out_file "/eagle/AIHPC4Edu/ssalazar/projects/enform
 --fasta_file "/eagle/AIHPC4Edu/ssalazar/Data/hg_sequences/mm10/mm10.fa" \
 --organism "mouse" \
 --tf_records "/eagle/AIHPC4Edu/ssalazar/Data/enformer_training_data/" \
---split "test" \
+--split "test" 
 '''
 parser = argparse.ArgumentParser()
 parser.add_argument('--out_file')
@@ -130,6 +130,11 @@ metadata = {
     'num_targets': num_targets
 }
 
+if args.organism == 'mouse':
+    file_id = 1
+else:
+    file_id = 0
+
 with h5py.File(out_file, 'w') as outFile:
     new_data = {
         'large_sequence': outFile.create_dataset(
@@ -152,7 +157,7 @@ with h5py.File(out_file, 'w') as outFile:
         bed_idx = 0 + (i*256) # row number on bed file
         print(bed_idx)
         record = load_tfrecord_to_numpy(
-        tfrecord_path=os.path.join(args.tf_records, f"{args.organism}/tfrecords/{split}-1-{i}.tfr"),
+        tfrecord_path=os.path.join(args.tf_records, f"{args.organism}/tfrecords/{split}-{file_id}-{i}.tfr"),
             metadata=metadata
         )['target']
         for j in grouped_indices[i]:

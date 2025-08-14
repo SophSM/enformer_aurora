@@ -33,6 +33,6 @@ awk '{
     }
     avg = (count > 0) ? sum / count : "NA";
     print $1, $2, $3, avg;
-}' > /beagle3/haky/users/sofia/enformer_retrain/EUR_allele_freqs_val/chr${chr}_allele_freqs.txt &
+}' > /beagle3/haky/users/sofia/enformer_retrain/EUR_allele_freqs_val/chr${chr}_EUR_allele_freqs.txt &
 done
 wait

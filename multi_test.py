@@ -1,22 +1,25 @@
 
 '''
+qsub -I -l select=2,walltime=00:60:00,place=scatter -l filesystems=flare -A GeomicVar -q debug-scaling
+
 module load frameworks
 source /lus/flare/projects/GeomicVar/ssalazar/venvs/torch_scale/bin/activate
 
 LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/lus/flare/projects/GeomicVar/ssalazar/venvs/torch_scale/lib
 unset CCL_WORKER_AFFINITY
 export OMP_NUM_THREADS=1
-export CPU_BIND_SCHEME="--cpu-bind=list:4:9:14:19:20:25:56:61:66:71:74:79"
-cd /flare/GeomicVar/ssalazar/projects/enformer_retraining/scripts
+export CPU_BIND_SCHEME="--cpu-bind=list:1-8:9-16:17-24:25-32:33-40:41-48:53-60:61-68:69-76:77-84:85-92:93-100"
+cd /flare/GeomicVar/ssalazar/projects/enformer_retraining/enformer_aurora/
 
-mpiexec -n 12 -ppn 12 ${CPU_BIND_SCHEME} python -u multi_test.py \
---stats_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/out" \
+mpiexec -n 24 -ppn 12 ${CPU_BIND_SCHEME} python -u multi_test.py \
+--stats_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/out_2_nodes" \
 --batch_size 4 \
 --val_frequency 4 \
 --cor_frequency 4 \
 --ckpt_frequency 50 \
 --max_steps 100 \
---ckpt_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/reference_checkpoints2"
+--human_val "/flare/GeomicVar/ssalazar/enformer_training_data/basenji_data_h5/valid_pop_seq.hdf5" \
+--ckpt_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/reference_checkpoints_2_nodes"
 '''
 
 
@@ -40,7 +43,6 @@ import os
 import time
 import h5py
 import numpy as np
-from scipy.stats import pearsonr
 import argparse
 
 
@@ -50,7 +52,7 @@ parser.add_argument("--stats_dir", type=str, default="/flare/GeomicVar/ssalazar/
 parser.add_argument("--batch_size", type=int, default=1 )
 parser.add_argument("--val_frequency", type=int, default = 5)
 parser.add_argument("--human_train", type=str, default="/flare/GeomicVar/ssalazar/enformer_training_data/basenji_data_h5/train_pop_seq.hdf5")
-parser.add_argument("--human_val", type=str, default="/flare/GeomicVar/ssalazar/enformer_training_data/basenji_data_h5/val_pop_seq.hdf5")
+parser.add_argument("--human_val", type=str, default="/flare/GeomicVar/ssalazar/enformer_training_data/basenji_data_h5/valid_pop_seq.hdf5")
 parser.add_argument("--mouse_train", type=str, default="/flare/GeomicVar/ssalazar/enformer_training_data/basenji_data_h5/train_mouse.hdf5")
 parser.add_argument("--mouse_val", type=str, default="/flare/GeomicVar/ssalazar/enformer_training_data/basenji_data_h5/valid_mouse.hdf5")
 parser.add_argument("--cor_frequency", type=int, default=5)
@@ -675,19 +677,19 @@ def build_model_and_optimizer(enformer_params, from_checkpoint, _rank, ckpt_dir,
     model, optimizer = ipex.optimize(model, optimizer=optimizer)
     model = DDP(model, find_unused_parameters = True)
     return model, optimizer, step
-
+'''
 def _reduced_shape(shape, axis):
-    '''
+    """
     Get the shape of the tensor after reducing over certain axes
-    '''
+    """
     if axis is None:
         return torch.Size([])
     return torch.Size([d for i, d in enumerate(shape) if i not in axis])
 
 class CorrelationStats(nn.Module):
-    '''
+    """
     Shared code to compute pearsonR and R2
-    '''
+    """
     def __init__(self, reduce_axis = None, name = 'pearsonr'):
         super().__init__()
         self._reduce_axis = reduce_axis
@@ -717,7 +719,7 @@ class CorrelationStats(nn.Module):
         y_pred = y_pred.float()
 
         reduce_axis = self._reduce_axis
-        # PyTorch's sum needs keepdim=False by default
+        # equivalent to assign_add()
         self._product_sum += y_true.mul(y_pred).sum(dim=reduce_axis)
         self._true_sum += y_true.sum(dim=reduce_axis)
         self._true_squared_sum += y_true.pow(2).sum(dim=reduce_axis)
@@ -749,7 +751,8 @@ class PearsonR(CorrelationStats):
 
         true_var = self._true_squared_sum - self._count * true_mean.pow(2)
         pred_var = self._pred_squared_sum - self._count * pred_mean.pow(2)
-        tp_var = (true_var.sqrt() * pred_var.sqrt()).clamp(min=1e-08)
+        # tp_var = (true_var.sqrt() * pred_var.sqrt()).clamp(min=1e-08)
+        tp_var = (true_var.sqrt() * pred_var.sqrt())
         correlation = covariance / tp_var
         return correlation
 
@@ -785,6 +788,63 @@ class MetricDict:
     def reset_states(self):
         for metric in self._metrics.values():
             metric.reset_states()
+'''
+
+def PearsonR(x, y):
+    """
+    computed column-wise as cov(x,y) / (sd(x)*sd(y)) for each sample in the batch
+    returns tensor of shape [batch_size, 5313]
+
+    r = sum((x - colmeans(x)) * (y - colmeans(y))) / sqrt(sum(x - colmeans(x)**2)* sum(y - colmeans(y)**2))
+    """
+    x_centered = x - x.mean(dim=1, keepdim=True)
+    y_centered = y - y.mean(dim=1, keepdim=True)
+    numerator = (x_centered * y_centered).sum(dim=1)
+    denominator = torch.sqrt((x_centered.pow(2)).sum(dim=1) * (y_centered.pow(2)).sum(dim=1))
+    cor = numerator / denominator
+    return(cor)
+
+def quantile_tensor(tensor, dim=None):
+    if dim is None:
+        q = torch.quantile(tensor, torch.tensor([0.0, 0.25, 0.5, 0.75, 1.0], device = tensor.device))
+    else:
+        q = torch.quantile(tensor, torch.tensor([0.0, 0.25, 0.5, 0.75, 1.0], device = tensor.device), dim=dim)
+    return q
+
+def summary_per_batch(r_batch):
+    '''
+    Input: PearsonR() output tensor of size (batch_size, 5313)
+    Output: Dictionary of tensors of shape (batch_size) for each statistic
+    '''
+    q = quantile_tensor(r_batch, dim = 1)
+    
+
+    mean = r_batch.mean(dim=1)
+    summary = {
+        'Min': q[0],
+        'Q1':q[1],
+        'Mean': mean,
+        'Median':q[2],
+        'Q3': q[3],
+        'Max': q[4]
+    }
+    return summary
+
+def summary_of_summary(summary):
+    '''
+    Input: dictionary output from summary_per_batch()
+    Output: dictionary with 1 number per statistic
+    '''
+    summary_s = {
+        'Median': quantile_tensor(summary['Median'])[2], # median of medians
+        'Mean': summary['Mean'].mean(), # mean of means
+    }
+    if 'Max' in summary.keys():
+        summary_s['Max']=summary['Max'].max() # max of max
+    if 'Min' in summary.keys():
+        summary_s['Min']=summary['Min'].min() # # min of min
+    return summary_s
+
 
 def save_checkpoint(model, optimizer, step, checkpoint_dir):
     if not os.path.exists(checkpoint_dir):
@@ -798,7 +858,40 @@ def save_checkpoint(model, optimizer, step, checkpoint_dir):
     }
     torch.save(checkpoint, checkpoint_path)
 
+def save_stats(args, global_step, elapsed_times,
+               human_train_stats, human_val_stats,
+               mouse_train_stats, mouse_val_stats):
+    
+    save_path = os.path.join(args.stats_dir, f"stats_step_{global_step}.npz")
 
+    np.savez_compressed(
+        save_path,
+        elapsed_times=elapsed_times,
+        human_train_mean_cor=human_train_stats['mean_cor'],
+        human_val_mean_cor=human_val_stats['mean_cor'],
+        mouse_train_mean_cor=mouse_train_stats['mean_cor'],
+        mouse_val_mean_cor=mouse_val_stats['mean_cor'],
+        human_train_median_cor=human_train_stats['median_cor'],
+        human_val_median_cor=human_val_stats['median_cor'],
+        mouse_train_median_cor=mouse_train_stats['median_cor'],
+        mouse_val_median_cor=mouse_val_stats['median_cor'],
+    )
+    print(f"Saved stats to {save_path}")
+
+def save_losses(args, global_step,
+                human_train_stats, human_val_stats,
+                mouse_train_stats, mouse_val_stats):
+
+    save_path = os.path.join(args.stats_dir, f"losses_step_{global_step}.npz")
+
+    np.savez_compressed(
+        save_path,
+        human_train_loss=human_train_stats['loss'],
+        human_val_loss=human_val_stats['loss'],
+        mouse_train_loss=mouse_train_stats['loss'],
+        mouse_val_loss=mouse_val_stats['loss'],
+    )
+    print(f"Saved losses to {save_path}")
 
 enformer_params = dict(channels= 1536, num_heads=8, num_transformer_layers=11, prediction_head="both")
 criterion = nn.PoissonNLLLoss(log_input=False, reduction="mean")
@@ -849,16 +942,23 @@ def train_step(model, x, y, criterion, head, cor=False):
     optimizer.step()
     optimizer.zero_grad()
     if cor:
+        '''
         metrics = MetricDict({
         "pearson": PearsonR(reduce_axis=(0,1))
         }).to(device)
         metrics.update_state(out[head], y)
         res = metrics.result()
+        '''
+        r = PearsonR(out[head], y) # shape: (batch_size, 5313)
+        r_summary = summary_of_summary(summary_per_batch(r))
         # res['pearson'] has shape (n_tracks,), then I take the mean over the tracks
         # r = res['pearson'].detach().cpu().numpy().mean()\
-        r = res['pearson'].detach().cpu().mean().unsqueeze(0)
-    else: r = -1
-    return loss, r
+        r_mean, r_median = r_summary['Mean'], r_summary['Median']
+
+    else: 
+        r_mean = -1
+        r_median = -1
+    return loss, r_mean, r_median
 
 def valid_step(model, x, y, criterion, head, cor=False):
 
@@ -867,6 +967,7 @@ def valid_step(model, x, y, criterion, head, cor=False):
         out = model(x) 
         loss = criterion(out[head], y)
         if cor:
+            '''
             metrics = MetricDict({
             "pearson": PearsonR(reduce_axis=(0,1))
             }).to(device)
@@ -875,11 +976,17 @@ def valid_step(model, x, y, criterion, head, cor=False):
             }).to(device)
             metrics.update_state(out[head], y)
             res = metrics.result()
+            '''
+            r = PearsonR(out[head], y) # shape: (batch_size, 5313)
+            r_summary = summary_of_summary(summary_per_batch(r))
             # res['pearson'] has shape (n_tracks,), then I take the mean over the tracks
-            # r = res['pearson'].detach().cpu().numpy().mean()
-            r = res['pearson'].detach().cpu().mean().unsqueeze(0)
-        else: r = -1
-    return loss, r
+            # r = res['pearson'].detach().cpu().numpy().mean()\
+            r_mean, r_median = r_summary['Mean'], r_summary['Median']
+
+        else: 
+            r_mean = -1
+            r_median = -1
+    return loss, r_mean, r_median
 
 def set_epoch(current_step, organism=None):
     if organism == 'human':
@@ -894,10 +1001,10 @@ def set_epoch(current_step, organism=None):
 
 max_steps = args.max_steps
 ckpt_freq = args.ckpt_frequency
-human_train_stats = {'loss': [], 'cor': []}
-human_val_stats = {'loss': [], 'cor': []}
-mouse_train_stats = {'loss': [], 'cor': []}
-mouse_val_stats = {'loss': [], 'cor': []}
+human_train_stats = {'loss': [], 'mean_cor': [], 'median_cor':[]}
+human_val_stats = {'loss': [], 'mean_cor': [], 'median_cor':[]}
+mouse_train_stats = {'loss': [], 'mean_cor': [], 'median_cor':[]}
+mouse_val_stats = {'loss': [], 'mean_cor': [], 'median_cor':[]}
 
 elapsed_times = []
 num_warmup_steps = 5000
@@ -930,17 +1037,20 @@ for _ in tqdm(range(max_steps-global_step)):
         human_train_iter = iter(human_train_loader)
         ht_x, ht_y = next(human_train_iter)
 
-    train_loss_human, r_train_human = train_step(model, ht_x.to(device), ht_y.to(device), criterion, head = 'human', cor=cor)
+    train_loss_human, r_train_human_mean, r_train_human_median = train_step(model, ht_x.to(device), ht_y.to(device), criterion, head = 'human', cor=cor)
     # gather loss values across ranks
     dist.all_reduce(train_loss_human, op=dist.ReduceOp.SUM)
     train_loss_human = train_loss_human / SIZE
     human_train_stats['loss'].append(train_loss_human.cpu().item())
     if cor:
         if RANK == 0:
-            h_t_cor_list = [torch.zeros_like(r_train_human) for _ in range(SIZE)]
-        else: h_t_cor_list=None
-        dist.gather(r_train_human, gather_list = h_t_cor_list, dst=0)
-        
+            h_t_mean_cor_list = [torch.zeros_like(r_train_human_mean) for _ in range(SIZE)]
+            h_t_median_cor_list = [torch.zeros_like(r_train_human_median) for _ in range(SIZE)]
+        else: 
+            h_t_mean_cor_list=None
+            h_t_median_cor_list=None
+        dist.gather(r_train_human_mean, gather_list = h_t_mean_cor_list, dst=0)
+        dist.gather(r_train_human_median, gather_list = h_t_median_cor_list, dst=0)
     if global_step % args.val_frequency == 0:
 
         # validation
@@ -951,15 +1061,20 @@ for _ in tqdm(range(max_steps-global_step)):
             human_val_iter = iter(human_val_loader)
             hv_x, hv_y = next(human_val_iter)
 
-        val_loss_human, r_val_human = valid_step(model, ht_x.to(device), ht_y.to(device), criterion, head = 'human', cor=cor)
+        val_loss_human, r_val_human_mean, r_val_human_median = valid_step(model, ht_x.to(device), ht_y.to(device), criterion, head = 'human', cor=cor)
         # gather loss values across ranks
         dist.all_reduce(val_loss_human, op=dist.ReduceOp.SUM)
         val_loss_human = val_loss_human / SIZE
         if cor:
             if RANK == 0:
-                h_v_cor_list = [torch.zeros_like(r_val_human) for _ in range(SIZE)]
-            else: h_v_cor_list=None
-            dist.gather(r_val_human, gather_list = h_v_cor_list, dst=0)
+                h_v_mean_cor_list = [torch.zeros_like(r_val_human_mean) for _ in range(SIZE)]
+                h_v_median_cor_list = [torch.zeros_like(r_val_human_median) for _ in range(SIZE)]
+            
+            else: 
+                h_v_mean_cor_list=None
+                h_v_median_cor_list=None
+            dist.gather(r_val_human_mean, gather_list = h_v_mean_cor_list, dst=0)
+            dist.gather(r_val_human_median, gather_list = h_v_median_cor_list, dst=0)
     # --mouse step--
     # train
     try:
@@ -968,7 +1083,7 @@ for _ in tqdm(range(max_steps-global_step)):
         set_epoch(global_step, 'mouse')
         mouse_train_iter = iter(mouse_train_loader)
         mt_x, mt_y = next(mouse_train_iter)
-    train_loss_mouse, r_train_mouse = train_step(model, mt_x.to(device), mt_y.to(device), criterion, head = 'mouse', cor=cor)
+    train_loss_mouse, r_train_mouse_mean, r_train_mouse_median = train_step(model, mt_x.to(device), mt_y.to(device), criterion, head = 'mouse', cor=cor)
     # gather loss values across ranks
     dist.all_reduce(train_loss_mouse, op=dist.ReduceOp.SUM)
     train_loss_mouse = train_loss_mouse / SIZE
@@ -976,9 +1091,13 @@ for _ in tqdm(range(max_steps-global_step)):
     
     if cor:
         if RANK == 0:
-            m_t_cor_list = [torch.zeros_like(r_train_mouse) for _ in range(SIZE)]
-        else: m_t_cor_list=None
-        dist.gather(r_train_mouse, gather_list = m_t_cor_list, dst=0)    
+            m_t_mean_cor_list = [torch.zeros_like(r_train_mouse_mean) for _ in range(SIZE)]
+            m_t_median_cor_list = [torch.zeros_like(r_train_mouse_median) for _ in range(SIZE)]
+        else: 
+            m_t_mean_cor_list=None
+            m_t_median_cor_list=None
+        dist.gather(r_train_mouse_mean, gather_list = m_t_mean_cor_list, dst=0)    
+        dist.gather(r_train_mouse_median, gather_list = m_t_median_cor_list, dst=0)    
     if global_step % args.val_frequency == 0:
         # validation
         try:
@@ -986,15 +1105,19 @@ for _ in tqdm(range(max_steps-global_step)):
         except StopIteration:
             mouse_val_iter = iter(mouse_val_loader)
             mv_x, mv_y = next(mouse_val_iter)
-        val_loss_mouse, r_val_mouse = valid_step(model, mv_x.to(device), mv_y.to(device), criterion, head = 'mouse', cor=cor)
+        val_loss_mouse, r_val_mouse_mean, r_val_mouse_median = valid_step(model, mv_x.to(device), mv_y.to(device), criterion, head = 'mouse', cor=cor)
         # gather loss values across ranks
         dist.all_reduce(val_loss_mouse, op=dist.ReduceOp.SUM)
         val_loss_mouse = val_loss_mouse / SIZE
         if cor:
             if RANK == 0:
-                m_v_cor_list = [torch.zeros_like(r_val_mouse) for _ in range(SIZE)]
-            else: m_v_cor_list=None
-            dist.gather(r_val_mouse, gather_list = m_v_cor_list, dst=0)
+                m_v_mean_cor_list = [torch.zeros_like(r_val_mouse_mean) for _ in range(SIZE)]
+                m_v_median_cor_list = [torch.zeros_like(r_val_mouse_median) for _ in range(SIZE)]
+            else: 
+                m_v_mean_cor_list=None
+                m_v_median_cor_list=None
+            dist.gather(r_val_mouse_mean, gather_list = m_v_mean_cor_list, dst=0)
+            dist.gather(r_val_mouse_median, gather_list = m_v_median_cor_list, dst=0)
 
 
     if RANK == 0:
@@ -1006,13 +1129,17 @@ for _ in tqdm(range(max_steps-global_step)):
             f"| Learning rate: {lr:>10.6f}"
         )
         if cor:
-            cor_h_t = torch.cat(h_t_cor_list)
-            cor_m_t = torch.cat(m_t_cor_list) # should have SIZE elements
-            human_train_stats['cor'].append(cor_h_t.mean().item())
-            mouse_train_stats['cor'].append(cor_m_t.mean().item())
+            cor_h_t_mean = torch.cat(h_t_mean_cor_list)
+            cor_h_t_median = torch.cat(h_t_median_cor_list)
+            cor_m_t_mean = torch.cat(m_t_mean_cor_list)
+            cor_m_t_median = torch.cat(m_t_median_cor_list)
+            human_train_stats['mean_cor'].append(cor_h_t_mean.mean().item())
+            human_train_stats['median_cor'].append(quantile_tensor(cor_h_t_median)[2].item())
+            mouse_train_stats['mean_cor'].append(cor_m_t_mean.mean().item())
+            mouse_train_stats['median_cor'].append(quantile_tensor(cor_m_t_mean)[2].item())
             print(
-                f"  Human train PearsonR: {cor_h_t.mean().item()}\n"
-                f"  Mouse train PearsonR: {cor_m_t.mean().item()}"
+                f"  Human train mean PearsonR: {cor_h_t_mean.mean().item()}\n"
+                f"  Mouse train mean PearsonR: {cor_m_t_mean.mean().item()}\n"
             )
         if global_step % args.val_frequency == 0:
             human_val_stats['loss'].append(val_loss_human.cpu().item())
@@ -1025,13 +1152,17 @@ for _ in tqdm(range(max_steps-global_step)):
             )
 
             if cor:
-                cor_h_v = torch.cat(h_v_cor_list)
-                cor_m_v = torch.cat(m_v_cor_list) # should have SIZE elements
-                human_val_stats['cor'].append(cor_h_v.mean().item())
-                mouse_val_stats['cor'].append(cor_m_v.mean().item())
+                cor_h_v_mean = torch.cat(h_v_mean_cor_list)
+                cor_h_v_median = torch.cat(h_v_median_cor_list)
+                cor_m_v_mean = torch.cat(m_v_mean_cor_list)
+                cor_m_v_median = torch.cat(m_v_median_cor_list)
+                human_val_stats['mean_cor'].append(cor_h_v_mean.mean().item())
+                human_val_stats['median_cor'].append(quantile_tensor(cor_h_v_median)[2].item())
+                mouse_val_stats['mean_cor'].append(cor_m_v_mean.mean().item())
+                mouse_val_stats['median_cor'].append(quantile_tensor(cor_m_v_median)[2].item())
                 print(
-                    f"  Human val PearsonR: {cor_h_v.mean().item()}\n"
-                    f"  Mouse val PearsonR: {cor_m_v.mean().item()}"
+                    f"  Human val PearsonR: {cor_h_v_mean.mean().item()}\n"
+                    f"  Mouse val PearsonR: {cor_m_v_mean.mean().item()}"
                 )
         end_time = time.time()
         elapsed = end_time - start_time
@@ -1043,16 +1174,13 @@ for _ in tqdm(range(max_steps-global_step)):
             print(f"Saved checkpoint")
 
 if RANK == 0:
-    np.save(f'{args.stats_dir}/time_{global_step}.npy', elapsed_times)
-    np.save(f'{args.stats_dir}/human_train_cor_{global_step}.npy', human_train_stats['cor'])
-    np.save(f'{args.stats_dir}/human_val_cor_{global_step}.npy', human_val_stats['cor'])
-    np.save(f'{args.stats_dir}/mouse_train_cor_{global_step}.npy', mouse_train_stats['cor'])
-    np.save(f'{args.stats_dir}/mouse_val_cor_{global_step}.npy', mouse_val_stats['cor'])
-
-np.save(f'{args.stats_dir}/human_train_loss_{global_step}.npy', human_train_stats['loss'])
-np.save(f'{args.stats_dir}/human_val_loss_{global_step}.npy', human_val_stats['loss'])
-np.save(f'{args.stats_dir}/mouse_train_loss_{global_step}.npy', mouse_train_stats['loss'])
-np.save(f'{args.stats_dir}/mouse_val_loss_{global_step}.npy', mouse_val_stats['loss'])
+    save_stats(args, global_step, elapsed_times,
+               human_train_stats, human_val_stats,
+               mouse_train_stats, mouse_val_stats)
+    
+save_losses(args, global_step,
+                human_train_stats, human_val_stats,
+                mouse_train_stats, mouse_val_stats)
 
 human_train_dataset.close()
 mouse_train_dataset.close()

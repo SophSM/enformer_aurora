@@ -1023,7 +1023,7 @@ for _ in tqdm(range(max_steps-global_step)):
         )
         if cor:
 
-            print("h_t_mean_cor_list shapes:", [t.shape for t in h_t_mean_cor_list])
+            print("h_t_mean_cor_list values:", [t for t in h_t_mean_cor_list])
             cor_h_t_mean = torch.cat(h_t_mean_cor_list)
             cor_h_t_median = torch.cat(h_t_median_cor_list)
             cor_m_t_mean = torch.cat(m_t_mean_cor_list)

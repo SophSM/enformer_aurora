@@ -951,7 +951,7 @@ for _ in tqdm(range(max_steps-global_step)):
             human_val_iter = iter(human_val_loader)
             hv_x, hv_y = next(human_val_iter)
 
-        val_loss_human, r_val_human_mean, r_val_human_median = valid_step(model, ht_x.to(device), ht_y.to(device), criterion, head = 'human', cor=cor)
+        val_loss_human, r_val_human_mean, r_val_human_median = valid_step(model, hv_x.to(device), hv_y.to(device), criterion, head = 'human', cor=cor)
         # gather loss values across ranks
         dist.all_reduce(val_loss_human, op=dist.ReduceOp.SUM)
         val_loss_human = val_loss_human / SIZE

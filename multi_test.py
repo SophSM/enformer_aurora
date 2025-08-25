@@ -931,7 +931,6 @@ for _ in tqdm(range(max_steps-global_step)):
         ht_x, ht_y = next(human_train_iter)
 
     train_loss_human, r_train_human_mean, r_train_human_median = train_step(model, ht_x.to(device), ht_y.to(device), criterion, head = 'human', cor=cor)
-    if RANK ==0: print(r_train_human_mean)
     # gather loss values across ranks
     dist.all_reduce(train_loss_human, op=dist.ReduceOp.SUM)
     train_loss_human = train_loss_human / SIZE
@@ -1023,6 +1022,8 @@ for _ in tqdm(range(max_steps-global_step)):
             f"| Learning rate: {lr:>10.6f}"
         )
         if cor:
+
+            print("h_t_mean_cor_list shapes:", [t.shape for t in h_t_mean_cor_list])
             cor_h_t_mean = torch.cat(h_t_mean_cor_list)
             cor_h_t_median = torch.cat(h_t_median_cor_list)
             cor_m_t_mean = torch.cat(m_t_mean_cor_list)

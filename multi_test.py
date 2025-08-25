@@ -846,7 +846,7 @@ def train_step(model, x, y, criterion, head, cor=False):
         r_summary = summary_of_summary(summary_per_batch(r))
         # res['pearson'] has shape (n_tracks,), then I take the mean over the tracks
         # r = res['pearson'].detach().cpu().numpy().mean()\
-        r_mean, r_median = r_summary['Mean'], r_summary['Median']
+        r_mean.view(1), r_median.view(1) = r_summary['Mean'], r_summary['Median']
 
     else: 
         r_mean = -1
@@ -874,7 +874,7 @@ def valid_step(model, x, y, criterion, head, cor=False):
             r_summary = summary_of_summary(summary_per_batch(r))
             # res['pearson'] has shape (n_tracks,), then I take the mean over the tracks
             # r = res['pearson'].detach().cpu().numpy().mean()\
-            r_mean, r_median = r_summary['Mean'], r_summary['Median']
+            r_mean.view(1), r_median.view(1) = r_summary['Mean'], r_summary['Median']
 
         else: 
             r_mean = -1
@@ -1024,10 +1024,10 @@ for _ in tqdm(range(max_steps-global_step)):
         if cor:
 
             print("h_t_mean_cor_list values:", [t for t in h_t_mean_cor_list])
-            cor_h_t_mean = torch.cat(h_t_mean_cor_list)
-            cor_h_t_median = torch.cat(h_t_median_cor_list)
-            cor_m_t_mean = torch.cat(m_t_mean_cor_list)
-            cor_m_t_median = torch.cat(m_t_median_cor_list)
+            cor_h_t_mean = torch.nan_to_num(torch.cat(h_t_mean_cor_list), nan=0.0)
+            cor_h_t_median = torch.nan_to_num(torch.cat(h_t_median_cor_list), nan=0.0)
+            cor_m_t_mean = torch.nan_to_num(torch.cat(m_t_mean_cor_list), nan=0.0)
+            cor_m_t_median = torch.nan_to_num(torch.cat(m_t_median_cor_list), nan=0.0)
             human_train_stats['mean_cor'].append(cor_h_t_mean.mean().item())
             human_train_stats['median_cor'].append(quantile_tensor(cor_h_t_median)[2].item())
             mouse_train_stats['mean_cor'].append(cor_m_t_mean.mean().item())

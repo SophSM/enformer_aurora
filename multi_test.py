@@ -11,15 +11,15 @@ export OMP_NUM_THREADS=1
 export CPU_BIND_SCHEME="--cpu-bind=list:1-8:9-16:17-24:25-32:33-40:41-48:53-60:61-68:69-76:77-84:85-92:93-100"
 cd /flare/GeomicVar/ssalazar/projects/enformer_retraining/enformer_aurora/
 
-mpiexec -n 24 -ppn 12 ${CPU_BIND_SCHEME} python -u multi_test.py \
---stats_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/out_2_nodes" \
---batch_size 4 \
---val_frequency 4 \
---cor_frequency 4 \
---ckpt_frequency 50 \
---max_steps 100 \
+mpiexec -n 12 -ppn 12 ${CPU_BIND_SCHEME} python -u multi_test.py \
+--stats_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/out_test" \
+--batch_size 1 \
+--val_frequency 1 \
+--cor_frequency 1 \
+--ckpt_frequency 1 \
+--max_steps 10 \
 --human_val "/flare/GeomicVar/ssalazar/enformer_training_data/basenji_data_h5/valid_pop_seq.hdf5" \
---ckpt_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/reference_checkpoints_2_nodes"
+--ckpt_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/ckpt_test"
 '''
 
 
@@ -62,6 +62,11 @@ parser.add_argument("--pop_seq", action="store_true")
 parser.add_argument("--from_checkpoint", default=False) 
 
 args = parser.parse_args()
+
+if not os.path.exists(args.ckpt_dir):
+    os.makedirs(args.ckpt_dir)
+if not os.path.exists(args.stats_dir):
+    os.makedirs(args.stats_dir)
 
 SIZE = MPI.COMM_WORLD.Get_size()
 RANK = MPI.COMM_WORLD.Get_rank()
@@ -677,118 +682,6 @@ def build_model_and_optimizer(enformer_params, from_checkpoint, _rank, ckpt_dir,
     model, optimizer = ipex.optimize(model, optimizer=optimizer)
     model = DDP(model, find_unused_parameters = True)
     return model, optimizer, step
-'''
-def _reduced_shape(shape, axis):
-    """
-    Get the shape of the tensor after reducing over certain axes
-    """
-    if axis is None:
-        return torch.Size([])
-    return torch.Size([d for i, d in enumerate(shape) if i not in axis])
-
-class CorrelationStats(nn.Module):
-    """
-    Shared code to compute pearsonR and R2
-    """
-    def __init__(self, reduce_axis = None, name = 'pearsonr'):
-        super().__init__()
-        self._reduce_axis = reduce_axis
-        self._shape = None
-        self.name = name
-    def _initialize(self, input_shape, device=None):
-        self._shape = _reduced_shape(input_shape, self._reduce_axis)
-        if device is None:
-            device = torch.device('xpu' if torch.xpu.is_available() else 'cpu')
-
-        def make_buffer():
-            return torch.zeros(self._shape, dtype=torch.float32, device=device)
-        
-        self.register_buffer('_count', make_buffer())
-        self.register_buffer('_product_sum', make_buffer())
-        self.register_buffer('_true_sum', make_buffer())
-        self.register_buffer('_true_squared_sum', make_buffer())
-        self.register_buffer('_pred_sum', make_buffer())
-        self.register_buffer('_pred_squared_sum', make_buffer())
-
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        if self._shape is None:
-            self._initialize(y_true.shape, device=y_true.device)
-        
-        assert y_true.shape == y_pred.shape, "Shapes must match"
-        y_true = y_true.float()
-        y_pred = y_pred.float()
-
-        reduce_axis = self._reduce_axis
-        # equivalent to assign_add()
-        self._product_sum += y_true.mul(y_pred).sum(dim=reduce_axis)
-        self._true_sum += y_true.sum(dim=reduce_axis)
-        self._true_squared_sum += y_true.pow(2).sum(dim=reduce_axis)
-        self._pred_sum += y_pred.sum(dim=reduce_axis)
-        self._pred_squared_sum += y_pred.pow(2).sum(dim=reduce_axis)
-        self._count += torch.ones_like(y_true).sum(dim=reduce_axis)
-    def result(self):
-        raise NotImplementedError("Must be implemented in subclasses.")
-
-    def reset_states(self):
-        if self._shape is not None:
-            for buf_name, buf_val in self._buffers.items():
-                self._buffers[buf_name].zero_()
-
-class PearsonR(CorrelationStats):
-    """Pearson correlation coefficient."""
-
-    def __init__(self, reduce_axis=(0,), name='pearsonr'):
-        super().__init__(reduce_axis=reduce_axis, name=name)
-
-    def result(self):
-        true_mean = self._true_sum / self._count
-        pred_mean = self._pred_sum / self._count
-
-        covariance = (self._product_sum
-                      - true_mean * self._pred_sum
-                      - pred_mean * self._true_sum
-                      + self._count * true_mean * pred_mean)
-
-        true_var = self._true_squared_sum - self._count * true_mean.pow(2)
-        pred_var = self._pred_squared_sum - self._count * pred_mean.pow(2)
-        # tp_var = (true_var.sqrt() * pred_var.sqrt()).clamp(min=1e-08)
-        tp_var = (true_var.sqrt() * pred_var.sqrt())
-        correlation = covariance / tp_var
-        return correlation
-
-class R2(CorrelationStats):
-    """R-squared (fraction of explained variance)."""
-
-    def __init__(self, reduce_axis=None, name='R2'):
-        super().__init__(reduce_axis=reduce_axis, name=name)
-
-    def result(self):
-        true_mean = self._true_sum / self._count
-        total = self._true_squared_sum - self._count * true_mean.pow(2)
-        residuals = (self._pred_squared_sum - 2 * self._product_sum
-                     + self._true_squared_sum)
-        return torch.ones_like(residuals) - residuals / total
-    
-class MetricDict:
-    def __init__(self, metrics):
-        self._metrics = metrics
-
-    def to(self, device):
-        for metric in self._metrics.values():
-            metric.to(device)
-        return self
-    
-    def update_state(self, y_true, y_pred):
-        for k, metric in self._metrics.items():
-            metric.update_state(y_true, y_pred)
-
-    def result(self):
-        return {k: metric.result() for k, metric in self._metrics.items()}
-
-    def reset_states(self):
-        for metric in self._metrics.values():
-            metric.reset_states()
-'''
 
 def PearsonR(x, y):
     """
@@ -1038,6 +931,7 @@ for _ in tqdm(range(max_steps-global_step)):
         ht_x, ht_y = next(human_train_iter)
 
     train_loss_human, r_train_human_mean, r_train_human_median = train_step(model, ht_x.to(device), ht_y.to(device), criterion, head = 'human', cor=cor)
+    if RANK ==0: print(r_train_human_mean)
     # gather loss values across ranks
     dist.all_reduce(train_loss_human, op=dist.ReduceOp.SUM)
     train_loss_human = train_loss_human / SIZE

@@ -11,14 +11,14 @@ export OMP_NUM_THREADS=1
 export CPU_BIND_SCHEME="--cpu-bind=list:1-8:9-16:17-24:25-32:33-40:41-48:53-60:61-68:69-76:77-84:85-92:93-100"
 cd /flare/GeomicVar/ssalazar/projects/enformer_retraining/enformer_aurora/
 
-mpiexec -n 12 -ppn 12 ${CPU_BIND_SCHEME} python -u multi_test.py \
---stats_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/out_test" \
+mpiexec -n 24 -ppn 12 ${CPU_BIND_SCHEME} python -u multi_test.py \
+--stats_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/stats_ref_2_nodes" \
 --batch_size 4 \
 --val_frequency 4 \
 --cor_frequency 4 \
 --ckpt_frequency 10 \
 --max_steps 100 \
---ckpt_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/ref_ckpt"
+--ckpt_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/ref_ckpt_2_nodes"
 '''
 
 
@@ -62,10 +62,8 @@ parser.add_argument("--from_checkpoint", default=False)
 
 args = parser.parse_args()
 
-if not os.path.exists(args.ckpt_dir):
-    os.makedirs(args.ckpt_dir)
-if not os.path.exists(args.stats_dir):
-    os.makedirs(args.stats_dir)
+os.makedirs(args.ckpt_dir, exist_ok=True)
+os.makedirs(args.stats_dir, exist_ok=True)
 
 SIZE = MPI.COMM_WORLD.Get_size()
 RANK = MPI.COMM_WORLD.Get_rank()

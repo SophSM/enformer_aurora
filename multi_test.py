@@ -14,8 +14,8 @@ cd /flare/GeomicVar/ssalazar/projects/enformer_retraining/enformer_aurora/
 mpiexec -n 24 -ppn 12 ${CPU_BIND_SCHEME} python -u multi_test.py \
 --stats_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/stats_ref_2_nodes" \
 --batch_size 4 \
---val_frequency 4 \
---cor_frequency 4 \
+--val_frequency 1 \
+--cor_frequency 1 \
 --ckpt_frequency 10 \
 --max_steps 100 \
 --ckpt_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/ref_ckpt_2_nodes"
@@ -1043,17 +1043,18 @@ for _ in tqdm(range(max_steps-global_step)):
             )
 
             if cor:
-                cor_h_v_mean = torch.cat(h_v_mean_cor_list)
-                cor_h_v_median = torch.cat(h_v_median_cor_list)
-                cor_m_v_mean = torch.cat(m_v_mean_cor_list)
-                cor_m_v_median = torch.cat(m_v_median_cor_list)
+                print(f"Human val means: {h_v_mean_cor_list}")
+                cor_h_v_mean = torch.nan_to_num(torch.cat(h_v_mean_cor_list),  nan=0.0)
+                cor_h_v_median = torch.nan_to_num(torch.cat(h_v_median_cor_list), nan=0.0)
+                cor_m_v_mean = torch.nan_to_num(torch.cat(m_v_mean_cor_list), nan=0.0)
+                cor_m_v_median = torch.nan_to_num(torch.cat(m_v_median_cor_list), nan=0.0)
                 human_val_stats['mean_cor'].append(cor_h_v_mean.mean().item())
                 human_val_stats['median_cor'].append(quantile_tensor(cor_h_v_median)[2].item())
                 mouse_val_stats['mean_cor'].append(cor_m_v_mean.mean().item())
                 mouse_val_stats['median_cor'].append(quantile_tensor(cor_m_v_median)[2].item())
                 print(
                     f"  Human val mean PearsonR: {cor_h_v_mean.mean().item()}\n"
-                    f"  Mouse val mean  PearsonR: {cor_m_v_mean.mean().item()}"
+                    f"  Mouse val mean PearsonR: {cor_m_v_mean.mean().item()}"
                 )
         end_time = time.time()
         elapsed = end_time - start_time

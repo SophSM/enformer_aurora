@@ -846,7 +846,7 @@ def train_step(model, x, y, criterion, head, cor=False):
         r_summary = summary_of_summary(summary_per_batch(r))
         # res['pearson'] has shape (n_tracks,), then I take the mean over the tracks
         # r = res['pearson'].detach().cpu().numpy().mean()\
-        r_mean.view(1), r_median.view(1) = r_summary['Mean'], r_summary['Median']
+        r_mean, r_median = r_summary['Mean'].view(1), r_summary['Median'].view(1)
 
     else: 
         r_mean = -1
@@ -874,7 +874,7 @@ def valid_step(model, x, y, criterion, head, cor=False):
             r_summary = summary_of_summary(summary_per_batch(r))
             # res['pearson'] has shape (n_tracks,), then I take the mean over the tracks
             # r = res['pearson'].detach().cpu().numpy().mean()\
-            r_mean.view(1), r_median.view(1) = r_summary['Mean'], r_summary['Median']
+            r_mean, r_median = r_summary['Mean'].view(1), r_summary['Median'].view(1)
 
         else: 
             r_mean = -1

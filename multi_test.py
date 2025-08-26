@@ -11,14 +11,14 @@ export OMP_NUM_THREADS=1
 export CPU_BIND_SCHEME="--cpu-bind=list:1-8:9-16:17-24:25-32:33-40:41-48:53-60:61-68:69-76:77-84:85-92:93-100"
 cd /flare/GeomicVar/ssalazar/projects/enformer_retraining/enformer_aurora/
 
-mpiexec -n 24 -ppn 12 ${CPU_BIND_SCHEME} python -u multi_test.py \
---stats_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/stats_ref_2_nodes" \
+mpiexec -n 12 -ppn 12 ${CPU_BIND_SCHEME} python -u multi_test.py \
+--stats_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/stats_ref_1_nodes" \
 --batch_size 4 \
---val_frequency 1 \
---cor_frequency 1 \
+--val_frequency 4 \
+--cor_frequency 4 \
 --ckpt_frequency 10 \
---max_steps 100 \
---ckpt_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/ref_ckpt_2_nodes"
+--max_steps 50 \
+--ckpt_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/ref_ckpt_1_nodes"
 '''
 
 
@@ -1043,7 +1043,6 @@ for _ in tqdm(range(max_steps-global_step)):
             )
 
             if cor:
-                print(f"Human val means: {h_v_mean_cor_list}")
                 cor_h_v_mean = torch.nan_to_num(torch.cat(h_v_mean_cor_list),  nan=0.0)
                 cor_h_v_median = torch.nan_to_num(torch.cat(h_v_median_cor_list), nan=0.0)
                 cor_m_v_mean = torch.nan_to_num(torch.cat(m_v_mean_cor_list), nan=0.0)

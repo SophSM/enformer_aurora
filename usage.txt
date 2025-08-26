@@ -1,0 +1,21 @@
+'''
+qsub -I -l select=2,walltime=00:60:00,place=scatter -l filesystems=flare -A GeomicVar -q debug-scaling
+
+module load frameworks
+source /lus/flare/projects/GeomicVar/ssalazar/venvs/torch_scale/bin/activate
+
+LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/lus/flare/projects/GeomicVar/ssalazar/venvs/torch_scale/lib
+unset CCL_WORKER_AFFINITY
+export OMP_NUM_THREADS=1
+export CPU_BIND_SCHEME="--cpu-bind=list:1-8:9-16:17-24:25-32:33-40:41-48:53-60:61-68:69-76:77-84:85-92:93-100"
+cd /flare/GeomicVar/ssalazar/projects/enformer_retraining/enformer_aurora/
+
+mpiexec -n 24 -ppn 12 ${CPU_BIND_SCHEME} python -u main.py \
+--stats_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/stats_ref_2_nodes" \
+--batch_size 4 \
+--val_frequency 4 \
+--cor_frequency 4 \
+--ckpt_frequency 10 \
+--max_steps 100 \
+--ckpt_dir "/flare/GeomicVar/ssalazar/projects/enformer_retraining/ref_ckpt_2_nodes"
+'''

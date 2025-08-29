@@ -264,7 +264,7 @@ def run(args):
             elapsed = end_time - start_time
             elapsed_times.append(elapsed)
         
-        if global_step % ckpt_freq == 0:
+        if (global_step > 0 and global_step % ckpt_freq == 0) or global_step == max_steps:
             if RANK == 0:
                 modelUtils.save_checkpoint(model=model, optimizer=optimizer, step=global_step, checkpoint_dir=args.ckpt_dir)
                 print(f"Saved checkpoint")

@@ -258,6 +258,8 @@ def run(args):
                         f"  Human val mean PearsonR: {cor_h_v_mean.mean().item()}\n"
                         f"  Mouse val mean PearsonR: {cor_m_v_mean.mean().item()}"
                     )
+
+
             end_time = time.time()
             elapsed = end_time - start_time
             elapsed_times.append(elapsed)
@@ -266,15 +268,13 @@ def run(args):
             if RANK == 0:
                 modelUtils.save_checkpoint(model=model, optimizer=optimizer, step=global_step, checkpoint_dir=args.ckpt_dir)
                 print(f"Saved checkpoint")
-
-    if RANK == 0:
-        utils.save_stats(args, global_step, elapsed_times,
-                human_train_stats, human_val_stats,
-                mouse_train_stats, mouse_val_stats)
-        
-    utils.save_losses(args, global_step,
+                utils.save_stats(args, global_step, elapsed_times,
                     human_train_stats, human_val_stats,
                     mouse_train_stats, mouse_val_stats)
+                
+            utils.save_losses(args, global_step,
+                human_train_stats, human_val_stats,
+                mouse_train_stats, mouse_val_stats)
 
     human_train_dataset.close()
     mouse_train_dataset.close()

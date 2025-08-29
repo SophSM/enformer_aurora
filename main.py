@@ -271,10 +271,17 @@ def run(args):
                 utils.save_stats(args, global_step, elapsed_times,
                     human_train_stats, human_val_stats,
                     mouse_train_stats, mouse_val_stats)
+
                 
             utils.save_losses(args, global_step,
                 human_train_stats, human_val_stats,
                 mouse_train_stats, mouse_val_stats)
+            # ---reset stats--- 
+            human_train_stats = {'loss': [], 'mean_cor': [], 'median_cor':[]}
+            human_val_stats = {'loss': [], 'mean_cor': [], 'median_cor':[]}
+            mouse_train_stats = {'loss': [], 'mean_cor': [], 'median_cor':[]}
+            mouse_val_stats = {'loss': [], 'mean_cor': [], 'median_cor':[]}
+            elapsed_times = []
 
     human_train_dataset.close()
     mouse_train_dataset.close()
